@@ -10,6 +10,13 @@
 <body>
 <a class="skip" href="#board">Skip to the board</a>
 <main id="board" tabindex="-1" aria-busy="true"></main>
+<!-- Top movers panel skeleton, filled by renderTopMovers in app.js. -->
+<template id="top-movers-template">
+  <section class="movers-panel" aria-label="Top movers (7d)">
+    <h2>Top movers (7d)</h2>
+    <div class="movers-cols"></div>
+  </section>
+</template>
 <script src="../data.js"></script>
 <script src="app.js"></script>
 </body>

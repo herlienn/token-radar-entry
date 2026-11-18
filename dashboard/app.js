@@ -173,6 +173,81 @@
     });
   }
 
+  function csvEscapeField(value) {
+    var text = value === null || value === undefined ? '' : String(value);
+    if (text.indexOf('"') >= 0 || text.indexOf(',') >= 0 || text.indexOf('\n') >= 0) {
+      return '"' + text.split('"').join('""') + '"';
+    }
+    return text;
+  }
+  function buildCsvText(list) {
+    var headerRow = ['rank', 'name', 'category', 'chains', 'tvl_usd', 'change_7d', 'age_days', 'readiness', 'implied_value_usd'];
+    var lines = [headerRow.join(',')];
+    list.forEach(function (r) {
+      var cells = [
+        r.rank,
+        r.name,
+        r.category || '',
+        (r.chains || []).join(' + '),
+        r.tvl_usd,
+        r.change_7d === null || r.change_7d === undefined ? '' : r.change_7d,
+        r.age_days === null || r.age_days === undefined ? '' : r.age_days,
+        r.readiness,
+        shownImplied(r)
+      ];
+      lines.push(cells.map(csvEscapeField).join(','));
+    });
+    return lines.join('\n') + '\n';
+  }
+  function downloadFilteredCsv() {
+    var list = sortedRows(rows());
+    var text = buildCsvText(list);
+    var blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var link = document.createElement('a');
+    link.href = url;
+    link.download = 'token-radar-board.csv';
+    link.textContent = 'token-radar-board.csv';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+  function topMoversLists() {
+    var scored = DATA.rows.filter(function (r) { return r.change_7d !== null && r.change_7d !== undefined; });
+    var gainers = scored.slice().sort(function (a, b) { return b.change_7d - a.change_7d; }).slice(0, 5);
+    var losers = scored.slice().sort(function (a, b) { return a.change_7d - b.change_7d; }).slice(0, 5);
+    return { gainers: gainers, losers: losers };
+  }
+  function moverRow(r) {
+    return el('button', { type: 'button', class: 'mover-row', onclick: function () { openDetail(r.slug); } },
+      el('span', { class: 'mover-name', text: r.name }),
+      el('span', { class: 'num ' + (r.change_7d >= 0 ? 'pos' : 'neg'), text: fmtPct(r.change_7d) }),
+      el('span', { class: 'num mover-value', text: fmtUsd(r.implied_value_usd) })
+    );
+  }
+  function renderTopMovers() {
+    var lists = topMoversLists();
+    var template = document.getElementById('top-movers-template');
+    var panel;
+    if (template && template.content && template.content.firstElementChild) {
+      panel = template.content.firstElementChild.cloneNode(true);
+    } else {
+      panel = el('section', { class: 'movers-panel', 'aria-label': 'Top movers (7d)' }, el('h2', { text: 'Top movers (7d)' }));
+    }
+    var cols = panel.querySelector('.movers-cols');
+    if (!cols) { cols = el('div', { class: 'movers-cols' }); panel.appendChild(cols); }
+    cols.appendChild(el('div', { class: 'movers-col' },
+      el('h3', { text: 'Biggest gains' }),
+      lists.gainers.map(function (r) { return moverRow(r); })
+    ));
+    cols.appendChild(el('div', { class: 'movers-col' },
+      el('h3', { text: 'Biggest losses' }),
+      lists.losers.map(function (r) { return moverRow(r); })
+    ));
+    return panel;
+  }
+
   function header() {
     return el('header', { class: 'top' },
       el('div', { class: 'brand' }, el('span', { class: 'mark' }), el('span', { class: 'brand-name', text: 'Token Radar' })),
@@ -238,6 +313,7 @@
       el('div', { class: 'field' }, el('label', { for: 'chain', text: 'Chain' }), chainSel),
       el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Scope' }), watchBtn),
       el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Token status' }), el('div', { class: 'tabs' }, pre, live)),
+      el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Export' }), el('button', { type: 'button', class: 'csv-button', text: 'Download CSV', onclick: function () { downloadFilteredCsv(); } })),
       el('span', { class: 'count', text: state.tab === 'pre-token' ? rows().length + ' rows shown' : DATA.live.length + ' live-token protocols' })
     );
   }
@@ -428,6 +504,7 @@
     shell.appendChild(header());
     shell.appendChild(lede());
     shell.appendChild(spotlight());
+    if (state.tab === 'pre-token') shell.appendChild(renderTopMovers());
     shell.appendChild(controls());
     shell.appendChild(state.tab === 'pre-token' ? boardTable() : liveTable());
     if (state.tab === 'pre-token') shell.appendChild(modelPanel());

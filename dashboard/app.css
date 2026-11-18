@@ -153,3 +153,28 @@ tbody tr[data-selected="true"] { background: var(--accent-soft); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; }
 }
+
+.movers-panel {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-panel);
+  padding: var(--step-4) var(--step-5); margin-bottom: var(--step-4); display: grid; gap: var(--step-3);
+}
+.movers-panel h2 { font-size: 17px; }
+.movers-cols { display: grid; grid-template-columns: 1fr 1fr; gap: var(--step-5); }
+.movers-col { display: grid; gap: var(--step-2); align-content: start; }
+.movers-col h3 { font-size: 13px; color: var(--muted); font-weight: 600; }
+.mover-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: var(--step-3); align-items: baseline;
+  text-align: left; padding: var(--step-2) 0; border: 0; border-bottom: 1px solid var(--border); background: none;
+}
+.mover-row:last-child { border-bottom: 0; }
+.mover-row:hover .mover-name { color: var(--accent); }
+.mover-name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mover-value { color: var(--muted); }
+.csv-button {
+  min-height: 36px; padding: 0 var(--step-4); border: 1px solid var(--accent); border-radius: var(--radius-control);
+  background: var(--accent); color: var(--surface); white-space: nowrap;
+}
+.csv-button:hover { background: var(--ink); border-color: var(--ink); }
+@media (max-width: 900px) {
+  .movers-cols { grid-template-columns: 1fr; }
+}
