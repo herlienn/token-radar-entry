@@ -248,6 +248,75 @@
     return panel;
   }
 
+  // Chain breakdown: the rows the board currently shows, grouped by each
+  // protocol's first listed chain. The search, category and watchlist
+  // filters apply; the chain filter itself does not, so the panel stays a
+  // way to pick a chain instead of collapsing to the one already picked.
+  // Totals are the group's own sums, so the eight chains' implied values
+  // add up to the shown board's total. Nothing here changes the model:
+  // every number below is a sum or a max of rows the board already scores.
+  function chainBreakdownRows() {
+    var q = state.q.trim().toLowerCase();
+    return DATA.rows.filter(function (r) {
+      if (state.category !== 'all' && r.category !== state.category) return false;
+      if (state.watchOnly && !r.watchlist) return false;
+      if (!q) return true;
+      var hay = [r.name, r.slug, r.category, (r.chains || []).join(' ')].join(' ').toLowerCase();
+      return hay.indexOf(q) >= 0;
+    });
+  }
+  function chainBreakdownTotals(list) {
+    var byChain = {};
+    list.forEach(function (r) {
+      var chain = (r.chains && r.chains.length > 0) ? r.chains[0] : 'Unlisted chain';
+      var entry = byChain[chain];
+      if (!entry) {
+        entry = { chain: chain, count: 0, tvl: 0, implied: 0, top: null };
+        byChain[chain] = entry;
+      }
+      entry.count += 1;
+      entry.tvl += r.tvl_usd || 0;
+      entry.implied += shownImplied(r);
+      if (!entry.top || shownImplied(r) > shownImplied(entry.top)) entry.top = r;
+    });
+    var totals = Object.keys(byChain).map(function (k) { return byChain[k]; });
+    totals.sort(function (a, b) { return b.implied - a.implied; });
+    return totals.slice(0, 8);
+  }
+  function chainShare(entry, totalImplied) {
+    if (!totalImplied) return '0% of shown value';
+    return ((entry.implied / totalImplied) * 100).toFixed(1) + '% of shown value';
+  }
+  function chainRow(entry, totalImplied) {
+    var top = entry.top ? entry.top.name + ' · ' + fmtUsd(shownImplied(entry.top)) : 'no protocol';
+    return el('button', { type: 'button', class: 'chain-row', onclick: function () { state.chain = entry.chain; writeHash(); render(); var sel = document.getElementById('chain'); if (sel && sel.scrollIntoView) sel.scrollIntoView(); } },
+      el('span', { class: 'chain-name', text: entry.chain }),
+      el('span', { class: 'num chain-stats', text: entry.count + ' protocol' + (entry.count === 1 ? '' : 's') }),
+      el('span', { class: 'num chain-stats', text: fmtUsd(entry.tvl) + ' TVL' }),
+      el('span', { class: 'num chain-stats', text: fmtUsd(entry.implied) }),
+      el('span', { class: 'num chain-stats', text: chainShare(entry, totalImplied) }),
+      el('span', { class: 'chain-top sub', text: 'Top: ' + top })
+    );
+  }
+  function renderChainBreakdown() {
+    var list = chainBreakdownRows();
+    var totals = chainBreakdownTotals(list);
+    var totalImplied = totals.reduce(function (sum, entry) { return sum + entry.implied; }, 0);
+    var template = document.getElementById('chain-breakdown-template');
+    var panel;
+    if (template && template.content && template.content.firstElementChild) {
+      panel = template.content.firstElementChild.cloneNode(true);
+    } else {
+      panel = el('section', { class: 'chains-panel', 'aria-label': 'Chains' }, el('h2', { text: 'Chains' }));
+    }
+    var cols = panel.querySelector('.chains-cols');
+    if (!cols) { cols = el('div', { class: 'chains-cols' }); panel.appendChild(cols); }
+    totals.forEach(function (entry) { cols.appendChild(chainRow(entry, totalImplied)); });
+    if (totals.length === 0) cols.appendChild(el('p', { class: 'sub', text: 'No chain matches the current filters.' }));
+    panel.appendChild(el('p', { class: 'sub chains-note', text: totals.length + ' chains shown · ' + list.length + ' protocols in the current view · ' + fmtUsd(totalImplied) + ' implied value in total' }));
+    return panel;
+  }
+
   function header() {
     return el('header', { class: 'top' },
       el('div', { class: 'brand' }, el('span', { class: 'mark' }), el('span', { class: 'brand-name', text: 'Token Radar' })),
@@ -505,6 +574,7 @@
     shell.appendChild(lede());
     shell.appendChild(spotlight());
     if (state.tab === 'pre-token') shell.appendChild(renderTopMovers());
+    if (state.tab === 'pre-token') shell.appendChild(renderChainBreakdown());
     shell.appendChild(controls());
     shell.appendChild(state.tab === 'pre-token' ? boardTable() : liveTable());
     if (state.tab === 'pre-token') shell.appendChild(modelPanel());
