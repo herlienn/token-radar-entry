@@ -3,28 +3,90 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Token Radar (radar-2): 198 pre-token protocols ranked by implied value, with a farm plan for each.">
-<title>Token Radar: pre-token protocols ranked by implied value</title>
+<title>Token Radar — radar-3: the fitted launch curve</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<a class="skip" href="#board">Skip to the board</a>
-<main id="board" tabindex="-1" aria-busy="true"></main>
-<!-- Top movers panel skeleton, filled by renderTopMovers in app.js. -->
-<template id="top-movers-template">
-  <section class="movers-panel" aria-label="Top movers (7d)">
-    <h2>Top movers (7d)</h2>
-    <div class="movers-cols"></div>
+<header>
+  <div class="title">
+    <h1>TOKEN RADAR <span class="tag">radar-3</span></h1>
+    <p class="sub">Pre-token protocols, valued by a curve fitted on the tokens that already trade — not by a flat multiple. Snapshot <span id="asof"></span>.</p>
+  </div>
+  <div class="legend">
+    <span><i class="dot farm"></i>farm</span>
+    <span><i class="dot thin"></i>thin</span>
+    <span><i class="dot skip"></i>skip</span>
+  </div>
+</header>
+
+<section id="kpis" aria-label="Key numbers"></section>
+
+<nav id="tabs">
+  <button data-tab="board" class="on">Board</button>
+  <button data-tab="model">Model &amp; tests</button>
+  <button data-tab="comps">Comps: actual vs fitted</button>
+  <button data-tab="coverage">Coverage</button>
+</nav>
+
+<main>
+  <section id="tab-board" class="tab on">
+    <div id="controls">
+      <input id="q" type="search" placeholder="Search name or slug…" aria-label="Search">
+      <select id="f-cat" aria-label="Category"><option value="">All categories</option></select>
+      <select id="f-chain" aria-label="Chain"><option value="">All chains</option></select>
+      <select id="f-verdict" aria-label="Verdict">
+        <option value="">All verdicts</option><option value="farm">farm</option>
+        <option value="thin">thin</option><option value="skip">skip</option>
+      </select>
+      <label class="chk"><input id="f-watch" type="checkbox"> watchlist only</label>
+      <select id="sort" aria-label="Sort">
+        <option value="rank">Sort: rank</option><option value="implied">Sort: implied value</option>
+        <option value="tvl">Sort: TVL</option><option value="growth">Sort: 7d growth</option>
+        <option value="net">Sort: farm net</option><option value="age">Sort: age</option>
+      </select>
+      <button id="csv" type="button">Export CSV</button>
+    </div>
+    <p id="count"></p>
+    <div class="tablewrap">
+      <table id="board">
+        <thead><tr>
+          <th>#</th><th>Protocol</th><th>TVL</th><th>7d</th><th>Implied value</th><th>Flat × median</th><th>Rank range</th><th>Verdict</th><th>Farm net</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div id="movers"></div>
+    <div id="chains"></div>
   </section>
-</template>
-<!-- Chain breakdown skeleton, filled by renderChainBreakdown in app.js. -->
-<template id="chain-breakdown-template">
-  <section class="chains-panel" aria-label="Chains">
-    <h2>Chains</h2>
-    <p class="sub">Top 8 chains by total implied value, from the rows shown above. Each protocol counts on its first listed chain. Click a chain to filter the board to it.</p>
-    <div class="chains-cols"></div>
+
+  <section id="tab-model" class="tab">
+    <div id="model"></div>
   </section>
-</template>
+
+  <section id="tab-comps" class="tab">
+    <p class="note">Every token the curve was fitted on: its real market cap against what the curve predicts. The worst misses are the honest part — a few tokens trade at 10–400× their TVL, and no curve explains them.</p>
+    <div class="tablewrap">
+      <table id="comps">
+        <thead><tr><th>Token</th><th>Category</th><th>TVL</th><th>Real mcap</th><th>Fitted</th><th>Log error</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="tab-coverage" class="tab">
+    <div id="coverage"></div>
+  </section>
+</main>
+
+<aside id="drawer" hidden>
+  <button id="drawer-close" type="button" aria-label="Close">×</button>
+  <div id="drawer-body"></div>
+</aside>
+
+<footer>
+  <p>radar-3. Static page, no network, no trackers. Values are fitted medians from the snapshot, not predictions of any launch. See the Model &amp; tests tab for what the snapshot does not contain.</p>
+</footer>
+
 <script src="../data.js"></script>
 <script src="app.js"></script>
 </body>

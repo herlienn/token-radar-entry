@@ -1,22 +1,19 @@
-// Token Radar radar-2 entry (Node 22, standard library only).
+// Token Radar v2 — radar-3 (Node 22, standard library only).
 //
-// The program reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>), scores every
-// rankable pre-token protocol with the model in lib/model.ts (radar-2: all 198, not a top-N TVL cutoff),
-// writes the ranked board to /output/board.json, and copies this repository's dashboard/ and
-// screenshots/ to /output. Last, it writes /output/dossier.json, the summary the judge reads, with the
-// vendored make.fun library.
-//
-// The dashboard is a static page, no framework and no network: dashboard/index.html, dashboard/app.css
-// and dashboard/app.js read /output/data.js, which this program writes from the same board. It covers
-// the watchlist, states the model and gives every protocol a farm plan.
+// Reads the sealed snapshot from /input/snapshot.json (or --input <file|dir>),
+// fits the comps curve in lib/radar.ts, and writes the ranked board to
+// /output/board.json. It copies this repository's dashboard/ and screenshots/
+// to /output, and writes /output/dossier.json last with the vendored
+// make.fun library — the scorer rebuilds the dossier from /output and
+// compares bytes, so the dossier must be written after everything else.
 //
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
-//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
+//   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../token-radar-01-kit/input/snapshot.json
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { boardIssue, buildRadar, dataScript, parseSnapshot } from './lib/model.ts';
+import { boardIssue, buildRadar, type Radar } from './lib/radar.ts';
 import { buildDossier } from './vendor/makefun-board.ts';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -42,16 +39,30 @@ if (!existsSync(inputFile)) {
 }
 const out = arg('output', process.env.MAKEFUN_OUTPUT_DIR ?? '/output');
 
-const snapshot = parseSnapshot(readFileSync(inputFile, 'utf8'));
-const { board, radar } = buildRadar(snapshot);
-const issue = boardIssue(board, snapshot);
+const raw = JSON.parse(readFileSync(inputFile, 'utf8'));
+const radar = buildRadar(raw);
+const issue = boardIssue(radar);
 if (issue !== null) {
-  process.stderr.write(`token radar: the model wrote a board the gate refuses: ${issue}\n`);
+  process.stderr.write(`token radar: the model wrote a board the gate refuses: ${issue.row}: ${issue.text}\n`);
+  process.exit(1);
+}
+// Every watchlist protocol must appear on the board — the scorer refuses a
+// board that misses one.
+const watchlist: string[] = Array.isArray(raw.watchlist) ? raw.watchlist : [];
+const onBoard = new Set(radar.rows.map((r) => r.slug));
+const missing = watchlist.filter((s) => !onBoard.has(s));
+if (missing.length > 0) {
+  process.stderr.write(`token radar: the board misses ${missing.length} watchlist slugs: ${missing.slice(0, 5).join(', ')}\n`);
   process.exit(1);
 }
 
+/** The dashboard reads this: the whole radar as one window.RADAR value. */
+function dataScript(r: Radar): string {
+  return `window.RADAR = ${JSON.stringify(r)};\n`;
+}
+
 mkdirSync(out, { recursive: true });
-writeFileSync(join(out, 'board.json'), `${JSON.stringify({ rows: board })}\n`);
+writeFileSync(join(out, 'board.json'), `${JSON.stringify({ rows: radar.rows })}\n`);
 writeFileSync(join(out, 'data.js'), dataScript(radar));
 
 /** Copy one directory's regular files into `to`, skipping names that start with a dot. */
@@ -85,7 +96,18 @@ for (const name of shots) {
 // The dossier is written last: the scorer rebuilds it from this /output and compares bytes.
 writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS, dashboard: { max_files: 400, max_bytes: 4_194_304 } }));
 
+const f = radar.fit;
+const verdicts = { farm: 0, thin: 0, skip: 0 };
+for (const r of radar.rows) verdicts[r.verdict]++;
 process.stdout.write(
-  `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored (${radar.early_size} early, ${radar.live_size} live set aside)\n` +
-    `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (3 files), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
+  `token radar v2 (radar-3): ${radar.coverage.total} protocols, ${radar.coverage.watchlist} on the watchlist, ${radar.rows.length} rows scored\n` +
+    `  comps fitted: ${f.n} tokens, one per ticker; beta = [${f.beta.map((v) => v.toFixed(3)).join(', ')}] (const, logTVL, growth, logAge, logChains, ageUnknown)\n` +
+    `  in-sample R2 ${f.r2.toFixed(3)}, median |log err| ${f.medAbsErr.toFixed(3)}; ` +
+    `LOO fitted ${f.looFitted.toFixed(3)} vs flat-median ${f.looFlatMedian.toFixed(3)} vs flat-0.22 ${f.looFlat022.toFixed(3)}\n` +
+    `  walk-forward (${f.wfTrainN} older fit, ${f.wfTestN} newer test) fitted ${f.wfFitted.toFixed(3)} vs flat-train ${f.wfFlatTrain.toFixed(3)} vs flat-0.22 ${f.wfFlat022.toFixed(3)}\n` +
+    `  coverage: ranked ${radar.coverage.ranked} (watchlist ${radar.coverage.watchlist} + early ${radar.coverage.early}), ` +
+    `wrapped-excluded ${radar.coverage.wrappedExcluded}, with-mcap ${radar.coverage.withMcap} (${radar.coverage.mcapNonpositive} non-positive), symbol-no-mcap ${radar.coverage.symbolNoMcap}\n` +
+    `  verdicts: farm ${verdicts.farm}, thin ${verdicts.thin}, skip ${verdicts.skip}\n` +
+    `  top 5: ${radar.rows.slice(0, 5).map((r) => `${r.slug} $${r.implied_value_usd.toLocaleString('en-US')}`).join(', ')}\n` +
+    `  wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')}, ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')}\n`,
 );
