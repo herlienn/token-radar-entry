@@ -1,6 +1,10 @@
 # Token Radar — radar-3
 
-A pre-token radar whose values come from a curve fitted on the tokens that
+[![make.fun · token-radar-01](https://make.fun/badge/token-radar-01.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![rank](https://make.fun/badge/token-radar-01/herlienn/token-radar-entry/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![reward](https://make.fun/badge/token-radar-01/herlienn/token-radar-entry/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+
+A make.fun entry for [token-radar-01](https://make.fun/bounty/token-radar-01) — a pre-token radar whose values come from a curve fitted on the tokens that
 already trade, not from a flat multiple. The previous board (radar-2) used
 `TVL × 0.22` for every protocol and ranked 7,576th of 12,753. The top boards
 all fit their pricing from traded tokens, so this one does the same — and
