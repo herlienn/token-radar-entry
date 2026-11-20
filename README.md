@@ -1,8 +1,8 @@
 # Token Radar — radar-4
 
 [![make.fun](https://make.fun/badge/token-radar-01.svg)](https://make.fun/bounty/token-radar-01)
-[![rank](https://make.fun/token-radar-01/herlienn/token-radar-entry/rank.svg)](https://make.fun/bounty/token-radar-01)
-[![reward](https://make.fun/token-radar-01/herlienn/token-radar-entry/reward.svg)](https://make.fun/bounty/token-radar-01)
+[![rank](https://make.fun/badge/token-radar-01/herlienn/token-radar-entry/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard)
+[![reward](https://make.fun/badge/token-radar-01/herlienn/token-radar-entry/reward.svg)](https://make.fun/bounty/token-radar-01)
 
 A token launch radar for the [token-radar-01 bounty](https://make.fun/bounty/token-radar-01): what would a protocol's token be worth if it launched today, and what should you do to farm it first?
 
