@@ -1,92 +1,69 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Token Radar — radar-3: the fitted launch curve</title>
+<title>Token Radar — radar-4</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 <header>
-  <div class="title">
-    <h1>TOKEN RADAR <span class="tag">radar-3</span></h1>
-    <p class="sub">Pre-token protocols, valued by a curve fitted on the tokens that already trade — not by a flat multiple. Snapshot <span id="asof"></span>.</p>
+  <div class="mast">
+    <h1>TOKEN RADAR <span class="v">radar-4</span></h1>
+    <p class="sub">What would a protocol's token be worth if it launched today — and what should you do to farm it first?</p>
+    <p class="meta" id="meta"></p>
   </div>
-  <div class="legend">
-    <span><i class="dot farm"></i>farm</span>
-    <span><i class="dot thin"></i>thin</span>
-    <span><i class="dot skip"></i>skip</span>
-  </div>
+  <div class="kpis" id="kpis"></div>
 </header>
-
-<section id="kpis" aria-label="Key numbers"></section>
-
-<nav id="tabs">
+<nav class="tabs" id="tabs">
   <button data-tab="board" class="on">Board</button>
   <button data-tab="model">Model &amp; tests</button>
-  <button data-tab="comps">Comps: actual vs fitted</button>
+  <button data-tab="comps">Comps</button>
   <button data-tab="coverage">Coverage</button>
 </nav>
-
 <main>
-  <section id="tab-board" class="tab on">
-    <div id="controls">
-      <input id="q" type="search" placeholder="Search name or slug…" aria-label="Search">
-      <select id="f-cat" aria-label="Category"><option value="">All categories</option></select>
-      <select id="f-chain" aria-label="Chain"><option value="">All chains</option></select>
-      <select id="f-verdict" aria-label="Verdict">
-        <option value="">All verdicts</option><option value="farm">farm</option>
-        <option value="thin">thin</option><option value="skip">skip</option>
+  <section id="tab-board">
+    <div class="panel" id="bestfarms"></div>
+    <div class="strip" id="integrity"></div>
+    <div class="filters">
+      <input id="q" type="search" placeholder="Search protocol or slug…" aria-label="Search">
+      <select id="fcat" aria-label="Category"><option value="">All categories</option></select>
+      <select id="fverdict" aria-label="Farm verdict">
+        <option value="">All verdicts</option><option value="farm">Farm</option>
+        <option value="thin">Thin</option><option value="skip">Skip</option>
       </select>
-      <label class="chk"><input id="f-watch" type="checkbox"> watchlist only</label>
-      <select id="sort" aria-label="Sort">
-        <option value="rank">Sort: rank</option><option value="implied">Sort: implied value</option>
-        <option value="tvl">Sort: TVL</option><option value="growth">Sort: 7d growth</option>
-        <option value="net">Sort: farm net</option><option value="age">Sort: age</option>
+      <select id="fsort" aria-label="Sort by">
+        <option value="rank">Sort: rank (implied value)</option>
+        <option value="ev">Sort: expected value</option>
+        <option value="odds">Sort: launch odds</option>
+        <option value="net">Sort: farm net</option>
+        <option value="tvl">Sort: TVL</option>
       </select>
-      <button id="csv" type="button">Export CSV</button>
+      <button id="csv">Download CSV</button>
     </div>
-    <p id="count"></p>
-    <div class="tablewrap">
-      <table id="board">
-        <thead><tr>
-          <th>#</th><th>Protocol</th><th>TVL</th><th>7d</th><th>Implied value</th><th>Flat × median</th><th>Rank range</th><th>Verdict</th><th>Farm net</th>
-        </tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-    <div id="movers"></div>
-    <div id="chains"></div>
+    <div class="count" id="boardcount"></div>
+    <table id="boardtable">
+      <thead><tr>
+        <th data-k="rank">#</th><th data-k="name">Protocol</th><th data-k="category">Category</th>
+        <th data-k="tvl_usd">TVL</th><th data-k="change_7d">7d</th><th data-k="age_days">Age</th>
+        <th data-k="implied_value_usd">Implied value</th><th data-k="launch_odds">Launch odds</th>
+        <th data-k="expected_value_usd">Expected value</th><th data-k="farm_verdict">Farm</th>
+        <th>Rank band</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <p class="more"><button id="more">Show all rows</button></p>
   </section>
-
-  <section id="tab-model" class="tab">
-    <div id="model"></div>
-  </section>
-
-  <section id="tab-comps" class="tab">
-    <p class="note">Every token the curve was fitted on: its real market cap against what the curve predicts. The worst misses are the honest part — a few tokens trade at 10–400× their TVL, and no curve explains them.</p>
-    <div class="tablewrap">
-      <table id="comps">
-        <thead><tr><th>Token</th><th>Category</th><th>TVL</th><th>Real mcap</th><th>Fitted</th><th>Log error</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section id="tab-coverage" class="tab">
-    <div id="coverage"></div>
-  </section>
+  <section id="tab-model" hidden><div id="modelcontent"></div></section>
+  <section id="tab-comps" hidden><div id="compscontent"></div></section>
+  <section id="tab-coverage" hidden><div id="coveragecontent"></div></section>
 </main>
-
 <aside id="drawer" hidden>
-  <button id="drawer-close" type="button" aria-label="Close">×</button>
-  <div id="drawer-body"></div>
+  <button id="closedrawer" aria-label="Close">×</button>
+  <div id="detail"></div>
 </aside>
-
 <footer>
-  <p>radar-3. Static page, no network, no trackers. Values are fitted medians from the snapshot, not predictions of any launch. See the Model &amp; tests tab for what the snapshot does not contain.</p>
+  <p>Built from the sealed snapshot alone (DefiLlama protocols, fetched 2026-11-14). No network, no live prices. Implied values are this radar's own fitted claim, never a prediction that a token will launch. Gas figures are November 2026 estimates — check the live fee before you transact.</p>
 </footer>
-
 <script src="../data.js"></script>
 <script src="app.js"></script>
 </body>
