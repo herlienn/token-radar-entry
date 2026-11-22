@@ -58,7 +58,7 @@
     var keptV = E.valueTerms.filter(function (t) { return t.verdict === 'kept'; }).length;
     var keptO = E.oddsTerms.filter(function (t) { return t.verdict === 'kept'; }).length;
     var tiles = [
-      ['×' + E.valueWf.toFixed(2), 'walk-forward miss, vs flat ×' + E.valueFlatWf.toFixed(2)],
+      ['×' + E.valueWf.toFixed(2), 'walk-forward miss, mean of 3 splits · CV ×' + E.valueCv.toFixed(2) + ' · flat ×' + E.valueFlatWf.toFixed(2)],
       [pct(E.rangeHonesty.looP2575, 0) + ' · ' + pct(E.rangeHonesty.wfP2575, 0), 'held-out caps inside P25–P75 (stated 50%), LOO · WF'],
       [E.oddsLooBrier.toFixed(3), 'odds Brier, LOO · base rate ' + E.oddsBaseBrier.toFixed(3)],
       [keptV + ' + ' + keptO, 'terms survived both tests (value + odds)'],
@@ -131,7 +131,7 @@
       '<div><b>' + money(r.range_lo_usd) + ' – ' + money(r.range_hi_usd) + '</b><span>P25–P75 range of the implied value</span></div>' +
       '<div><b>#' + r.rank_band_lo + '–#' + r.rank_band_hi + '</b><span>rank band over 200 bootstrap refits</span></div>' +
       '<div><b>' + dollars(r.net_usd) + '</b><span>net: expected drop ' + dollars(r.expected_drop_usd) + ' − cost ' + dollars(r.total_cost_usd) + '</span></div>' +
-      '<div><b>' + r.verdict + '</b><span>farm verdict · deposit $' + r.deposit_usd + ' · hold until ' + r.hold_until_date + ' · break-even ' + (r.break_even_date || 'none') + '</span></div>' +
+      '<div><b>' + r.verdict + '</b><span>farm verdict · deposit $' + r.deposit_usd + ' · hold until ' + r.hold_until_date + ' · net ' + dollars(r.net_usd) + '</span></div>' +
       '</div>' +
       '<h3>How the implied value is built (log10 contributions)</h3>' +
       '<p>intercept ' + r.contrib_intercept.toFixed(2) + ' + size ' + r.contrib_size.toFixed(2) + ' + growth ' + r.contrib_growth.toFixed(2) + ' = ' + logSum.toFixed(2) + ' → ' + money(r.implied_value_usd) + '. The growth term is the 7-day TVL change, clamped to [−60%, +120%].</p>' +
@@ -156,24 +156,38 @@
     h += '<h2>The model</h2>' +
       '<p>Value: log10(market cap) = ' + E.valueBeta[0].toFixed(2) + ' + ' + E.valueBeta[1].toFixed(2) + ' × log10(TVL)' +
       (E.valueTerms.some(function (t) { return t.term === 'growth' && t.verdict === 'kept'; }) ? ' + ' + E.valueBeta[2].toFixed(2) + ' × growth' : '') +
-      ', fit by OLS on ' + E.compsN + ' traded comps with a usable cap and a listing date (of ' + E.compsPriced + ' priced tokens). ' +
-      'A term is kept only if adding it to the base lowers the held-out error in <b>both</b> tests — leave-one-out and walk-forward (older half fits, newer half scored) — by at least 1% for the value model and 0.002 Brier for the odds model. A term that wins by a hair is noise, not signal. ' +      'Kept for value: ' + (keptV.length ? keptV.join(', ') : 'none beyond size') + '. Kept for odds: ' + (keptO.length ? keptO.join(', ') : 'none beyond age and size') + '.</p>';
+      ', fit by OLS on ' + E.compsN + ' traded comps (cleaning table below; of ' + E.compsPriced + ' priced tokens). ' +
+      'A term is kept only if adding it to the base lowers the held-out error in <b>both</b> tests — leave-one-out and walk-forward, the mean of three splits (older half / 60% / 40% fits, the newer launches scored) — by at least 1% for the value model and 0.002 Brier for the odds model. A term that wins by a hair is noise, not signal. One split alone is unstable — the miss moves a lot with the cut — so the headline walk-forward number is the mean of the three, and the tables show all three. ' +      'Kept for value: ' + (keptV.length ? keptV.join(', ') : 'none beyond size') + '. Kept for odds: ' + (keptO.length ? keptO.join(', ') : 'none beyond age and size') + '.</p>';
     h += '<h3>Value coefficients (bootstrap SE, 200 refits)</h3><table><thead><tr><th>Term</th><th class="num">Coefficient</th><th class="num">SE</th></tr></thead><tbody>' +
       E.valueLabels.map(function (lab, i) {
         return '<tr><td>' + esc(lab) + '</td><td class="num">' + E.valueBeta[i].toFixed(3) + '</td><td class="num">± ' + E.valueSe[i].toFixed(3) + '</td></tr>';
       }).join('') + '</tbody></table>';
-    h += '<h3>Value terms — two tests each</h3><table><thead><tr><th>Term</th><th class="num">LOO miss</th><th class="num">Walk-forward miss</th><th class="num">Win share, 200 splits</th><th>Verdict</th><th>Note</th></tr></thead><tbody>' +
-      '<tr><td>size only (base)</td><td class="num">×' + E.valueBaseLoo.toFixed(2) + '</td><td class="num">×' + E.valueBaseWf.toFixed(2) + '</td><td class="num">—</td><td>base</td><td>The base every candidate is added to. Flat-median baseline: LOO ×' + E.valueFlatLoo.toFixed(2) + ', walk-forward ×' + E.valueFlatWf.toFixed(2) + '.</td></tr>' +
+    h += '<h3>Value terms — two tests each</h3><table><thead><tr><th>Term</th><th class="num">LOO miss</th><th class="num">Walk-forward miss (mean of 3 splits)</th><th class="num">Win share, 200 splits</th><th>Verdict</th><th>Note</th></tr></thead><tbody>' +
+      '<tr><td>size only (base)</td><td class="num">×' + E.valueBaseLoo.toFixed(2) + '</td><td class="num">×' + E.valueBaseWf.toFixed(2) + '</td><td class="num">—</td><td>base</td><td>The base every candidate is added to. Flat-median baseline: LOO ×' + E.valueFlatLoo.toFixed(2) + ', walk-forward ×' + E.valueFlatWf.toFixed(2) + ' [' + E.valueFlatWfSplits.map(function (s) { return '×' + s.toFixed(2); }).join(' / ') + '].</td></tr>' +
       E.valueTerms.map(function (t) {
         return '<tr><td>' + esc(t.label) + '</td><td class="num">×' + t.loo.toFixed(2) + '</td><td class="num">×' + t.wf.toFixed(2) + '</td><td class="num">' + pct(t.winShare, 0) + '</td><td>' + verdictBadge(t.verdict) + '</td><td>' + esc(t.note) + '</td></tr>';
       }).join('') + '</tbody></table>' +
-      '<p>Final value model: LOO ×' + E.valueLoo.toFixed(2) + ', walk-forward ×' + E.valueWf.toFixed(2) + ' — against a flat median of ×' + E.valueFlatLoo.toFixed(2) + ' / ×' + E.valueFlatWf.toFixed(2) + '.</p>';
-    h += '<h3>Odds terms — two tests each (Brier, lower is better)</h3><table><thead><tr><th>Term</th><th class="num">LOO Brier</th><th class="num">Walk-forward Brier</th><th class="num">Win share, 200 splits</th><th>Verdict</th><th>Note</th></tr></thead><tbody>' +
+      '<p>Final value model: LOO ×' + E.valueLoo.toFixed(2) + ', walk-forward ×' + E.valueWf.toFixed(2) + ' (splits ×' + E.valueWfSplits.map(function (s) { return s.toFixed(2); }).join(' / ×') + '), 5-fold CV ×' + E.valueCv.toFixed(2) + ' (seeds ×' + E.valueCvSeeds.map(function (s) { return s.toFixed(2); }).join(' / ×') + ') — against a flat median of ×' + E.valueFlatLoo.toFixed(2) + ' / ×' + E.valueFlatWf.toFixed(2) + '.</p>';
+    h += '<h3>Odds terms — two tests each (Brier, lower is better)</h3><table><thead><tr><th>Term</th><th class="num">LOO Brier</th><th class="num">Walk-forward Brier (mean of 3 splits)</th><th class="num">Win share, 200 splits</th><th>Verdict</th><th>Note</th></tr></thead><tbody>' +
       '<tr><td>age + size (base)</td><td class="num">' + E.oddsBaseLoo.toFixed(3) + '</td><td class="num">' + E.oddsBaseWf.toFixed(3) + '</td><td class="num">—</td><td>base</td><td>Base rate of the ' + E.peersN + ' peers is ' + pct(E.peersBaseRate) + ', Brier ' + E.oddsBaseBrier.toFixed(3) + '.</td></tr>' +
       E.oddsTerms.map(function (t) {
         return '<tr><td>' + esc(t.label) + '</td><td class="num">' + t.loo.toFixed(3) + '</td><td class="num">' + t.wf.toFixed(3) + '</td><td class="num">' + pct(t.winShare, 0) + '</td><td>' + verdictBadge(t.verdict) + '</td><td>' + esc(t.note) + '</td></tr>';
       }).join('') + '</tbody></table>' +
-      '<p>Final odds model: Brier LOO ' + E.oddsLooBrier.toFixed(3) + ', walk-forward ' + E.oddsWfBrier.toFixed(3) + ', against a base rate of ' + E.oddsBaseBrier.toFixed(3) + '.</p>';
+      '<p>Final odds model: Brier LOO ' + E.oddsLooBrier.toFixed(3) + ', walk-forward ' + E.oddsWfBrier.toFixed(3) + ' (splits ' + E.oddsWfSplits.map(function (s) { return s.toFixed(3); }).join(' / ') + '), 5-fold CV ' + E.oddsCvBrier.toFixed(3) + ', against a base rate of ' + E.oddsBaseBrier.toFixed(3) + '.</p>';
+    h += '<h3>Comps — how the ' + E.compsN + ' were cleaned</h3>' +
+      '<p>A comp has to price the protocol itself. Each rule below removes protocols whose cap does not — the counts are the running total after each rule, and the dropped names are named, not hidden.</p>' +
+      '<table><thead><tr><th>Stage</th><th class="num">Left</th><th>Why</th></tr></thead><tbody>' +
+      E.compsCleaning.map(function (s) {
+        return '<tr><td>' + esc(s.stage) + '</td><td class="num">' + s.count + '</td><td>' + esc(s.note) + '</td></tr>';
+      }).join('') + '</tbody></table>';
+    h += '<h3>Farm scenario — what a FARM verdict means</h3>' +
+      '<p>The farmer is a committed retail farmer with a flat <b>$' + E.farmScenario.depositUsd.toLocaleString('en-US') + ' stake</b> per farm. The drop pool is <b>' + Math.round(E.farmScenario.dropShare * 100) + '% of the expected value</b> (implied value × odds), and the farmer\u2019s share is the deposit as a fraction of TVL — ' + esc(E.farmScenario.eligibleNote) + '. The horizon is ' + E.farmScenario.horizonWeeks + ' weeks. Costs are fixed gas only: <b>$' + E.farmScenario.costUsd + '</b> (' + esc(E.farmScenario.costBreakdown) + '). The plan is deposit + hold + claim — no weekly paid action. FARM means the expected drop beats the gas by at least $10; MARGINAL means it beats the gas at all; SKIP means it does not. The $' + E.farmScenario.depositUsd.toLocaleString('en-US') + ' is locked for the hold (30–60 days) and its forgone yield is not in the verdict — see the sensitivity table.</p>' +
+      '<p>Why a flat stake, and why the whole TVL as the denominator? A stake that scales with TVL would make the verdicts depend on the farmer\u2019s wallet, not on the protocol — and a fraction of TVL as the eligible pool (say 10%) is an invented number that multiplies every expected drop by ten with no evidence behind it. The conservative end is to assume every TVL dollar earns points pro-rata: if only some TVL earns the drop, the true share — and the drop — is larger, so the base case understates the payoff rather than inventing one. The counts below are reported as-is; the parameters were not tuned to reach a target.</p>' +
+      '<table><thead><tr><th>Scenario</th><th class="num">FARM</th><th class="num">MARGINAL</th><th class="num">SKIP</th><th>Note</th></tr></thead><tbody>' +
+      E.farmSensitivity.map(function (s) {
+        return '<tr><td>' + esc(s.label) + '</td><td class="num">' + s.farm + '</td><td class="num">' + s.marginal + '</td><td class="num">' + s.skip + '</td><td>' + esc(s.note) + '</td></tr>';
+      }).join('') + '</tbody></table>' +
+      '<p>Best farms on the board (' + E.farmCounts.farm + ' FARM / ' + E.farmCounts.marginal + ' MARGINAL / ' + E.farmCounts.skip + ' SKIP of ' + E.boardN + '): use the FARM filter on the board tab. Every row carries an 8-step plan with dates and costs.</p>';
     h += '<h3>Range honesty — do the printed bands cover what they state?</h3>' +
       '<p>Intervals come from held-out residuals only. P25–P75 states 50%, P10–P90 states 80%.</p>' +
       '<table><thead><tr><th>Test</th><th class="num">P25–P75 coverage</th><th class="num">P10–P90 coverage</th><th class="num">Held-out caps</th></tr></thead><tbody>' +
@@ -217,7 +231,7 @@
       }).join('') + '</tbody></table>' +
       '<p>The board is the whole watchlist (40/40) plus the top 158 rankable protocols below the $' + (R.floorUsd / 1e6) + 'M floor by TVL — the kit starter\u2019s rule. ' +
       'Rankable means pre-token, not an exchange, not a versioned name. The early set includes bridge, staking and wrapped-name rows (the house list keeps those categories off the watchlist, but the starter\u2019s rule ranks by TVL below the floor); they are listed here so the count still sums to 758.</p>' +
-      '<p>Comps: ' + E.compsN + ' traded protocols with a usable cap and a listing date fit the value model (of ' + E.compsPriced + ' priced tokens). Odds peers: ' + E.peersN + ' protocols with a listing date, base rate ' + pct(E.peersBaseRate) + '.</p></div>';
+      '<p>Comps: ' + E.compsN + ' traded protocols fit the value model after the cleaning table on the Model tab (of ' + E.compsPriced + ' priced tokens). Odds peers: ' + E.peersN + ' protocols with a listing date, base rate ' + pct(E.peersBaseRate) + '.</p></div>';
     document.getElementById('coverage').innerHTML = h;
   }
 

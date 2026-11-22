@@ -46,8 +46,8 @@ function fail(message: string): never {
 }
 
 /** Parse and validate the sealed snapshot; refuse anything malformed.
- * A negative mcap_usd is the source's sentinel for "no usable cap" (one
- * protocol carries -1): it is kept as-is and the model treats the protocol
+ * A non-positive mcap_usd is the source's sentinel for "no usable cap" (16
+ * protocols carry one): it is kept as-is and the model treats the protocol
  * as token-recorded with no usable cap, never as a comp. */
 function parseSnapshot(text: string): Snapshot {
   let raw: unknown;
@@ -187,8 +187,8 @@ writeFileSync(join(out, 'dossier.json'), dossierBytes);
 const farm = evidence.farmCounts;
 process.stdout.write(
   `token radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored\n` +
-    `token radar: value model log10(mcap) ~ log10(TVL)${evidence.valueTerms.some((t) => t.term === 'growth' && t.verdict === 'kept') ? ' + growth' : ''}: LOO x${evidence.valueLoo.toFixed(2)}, walk-forward x${evidence.valueWf.toFixed(2)} (flat x${evidence.valueFlatLoo.toFixed(2)} / x${evidence.valueFlatWf.toFixed(2)})\n` +
-    `token radar: odds Brier LOO ${evidence.oddsLooBrier.toFixed(3)}, walk-forward ${evidence.oddsWfBrier.toFixed(3)} (base rate ${evidence.oddsBaseBrier.toFixed(3)})\n` +
+    `token radar: value model log10(mcap) ~ log10(TVL)${evidence.valueTerms.some((t) => t.term === 'growth' && t.verdict === 'kept') ? ' + growth' : ''}: LOO x${evidence.valueLoo.toFixed(2)}, walk-forward x${evidence.valueWf.toFixed(2)} [${evidence.valueWfSplits.map((s) => `x${s.toFixed(2)}`).join(' / ')}], 5-fold CV x${evidence.valueCv.toFixed(2)} (flat x${evidence.valueFlatLoo.toFixed(2)} / x${evidence.valueFlatWf.toFixed(2)} [${evidence.valueFlatWfSplits.map((s) => `x${s.toFixed(2)}`).join(' / ')}])\n` +
+    `token radar: odds Brier LOO ${evidence.oddsLooBrier.toFixed(3)}, walk-forward ${evidence.oddsWfBrier.toFixed(3)} [${evidence.oddsWfSplits.map((s) => s.toFixed(3)).join(' / ')}], 5-fold CV ${evidence.oddsCvBrier.toFixed(3)} (base rate ${evidence.oddsBaseBrier.toFixed(3)})\n` +
     `token radar: farms ${farm.farm} FARM / ${farm.marginal} MARGINAL / ${farm.skip} SKIP of ${board.length}\n` +
     `token radar: wrote ${join(out, 'board.json')}, ${join(out, 'data.js')}, ${join(out, 'dashboard')} (${dashFiles.length} files + evidence.js), ${join(out, 'screenshots')} (${shots.length} images) and ${join(out, 'dossier.json')} (${dossierBytes.length} bytes, text ${measured.textBytes} bytes)\n`,
 );

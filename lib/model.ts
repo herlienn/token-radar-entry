@@ -80,11 +80,20 @@ export interface AccountingGroup {
   detail: string;
 }
 
+export interface FarmSensitivityRow {
+  label: string;
+  farm: number;
+  marginal: number;
+  skip: number;
+  note: string;
+}
+
 export interface Evidence {
   asOf: string;
   floorUsd: number;
   compsN: number;
   compsPriced: number;
+  compsCleaning: { stage: string; count: number; note: string }[];
   peersN: number;
   peersBaseRate: number;
   valueBeta: number[];
@@ -93,11 +102,15 @@ export interface Evidence {
   valueTerms: TermResult[];
   valueRivals: RivalResult[];
   valueLoo: number;
-  valueWf: number;
+  valueWf: number; // mean of the three walk-forward splits
+  valueWfSplits: number[]; // walk-forward miss at train fractions 0.5 / 0.6 / 0.4
+  valueCv: number; // mean of the 5-fold CV medians over 5 seeds
+  valueCvSeeds: number[];
   valueBaseLoo: number;
   valueBaseWf: number;
   valueFlatLoo: number;
   valueFlatWf: number;
+  valueFlatWfSplits: number[];
   rangeHonesty: {
     looP2575: number;
     looP1090: number;
@@ -112,13 +125,24 @@ export interface Evidence {
   oddsTerms: TermResult[];
   oddsRivals: RivalResult[];
   oddsLooBrier: number;
-  oddsWfBrier: number;
+  oddsWfBrier: number; // mean of the three walk-forward splits
+  oddsWfSplits: number[];
+  oddsCvBrier: number; // mean of the 5-fold CV Briers over 5 seeds
   oddsBaseLoo: number;
   oddsBaseWf: number;
   oddsBaseBrier: number;
   kinBeta: number;
   kinSe: number;
   kinCompsN: number;
+  farmScenario: {
+    depositUsd: number;
+    dropShare: number;
+    eligibleNote: string;
+    horizonWeeks: number;
+    costUsd: number;
+    costBreakdown: string;
+  };
+  farmSensitivity: FarmSensitivityRow[];
   farmCounts: { farm: number; marginal: number; skip: number };
   accounting: AccountingGroup[];
   boardN: number;
@@ -376,34 +400,77 @@ function looMissValue(comps: SnapshotProtocol[], terms: string[], ctx: ValueCtx)
   return { miss: median(residuals.map((e) => Math.pow(10, Math.abs(e)))), residuals, preds };
 }
 
-function wfSplit(comps: SnapshotProtocol[]): { train: SnapshotProtocol[]; test: SnapshotProtocol[] } {
+// Walk-forward at three train fractions (0.5 / 0.6 / 0.4): fit on the older
+// launches, score the newer ones. One split is unstable — the miss moves a
+// lot with the cut — so the headline walk-forward number is the mean of the
+// three, and the table shows all three. The range-honesty panel still uses
+// the 0.5 split (train older half, test newer half).
+const WF_FRACTIONS = [0.5, 0.6, 0.4];
+
+function wfSplits(comps: SnapshotProtocol[]): { train: SnapshotProtocol[]; test: SnapshotProtocol[] }[] {
   const dated = [...comps].sort((a, b) => ((a.listed_at as string) < (b.listed_at as string) ? -1 : 1));
-  const half = Math.floor(dated.length / 2);
-  return { train: dated.slice(0, half), test: dated.slice(half) };
+  return WF_FRACTIONS.map((frac) => {
+    const cut = Math.floor(dated.length * frac);
+    return { train: dated.slice(0, cut), test: dated.slice(cut) };
+  });
 }
 
-function wfMissValue(comps: SnapshotProtocol[], terms: string[], ctx: ValueCtx): { miss: number; residuals: number[] } {
-  const { train, test } = wfSplit(comps);
-  const beta = fitValue(train, terms, ctx);
-  const residuals = test.map((p) => Math.log10(p.mcap_usd as number) - dot(valueFeats(p, terms, ctx), beta));
-  return { miss: median(residuals.map((e) => Math.pow(10, Math.abs(e)))), residuals };
+function wfMissValue(comps: SnapshotProtocol[], terms: string[], ctx: ValueCtx): { miss: number; splits: number[]; residuals: number[] } {
+  const splits = wfSplits(comps);
+  const misses = splits.map(({ train, test }) => {
+    const beta = fitValue(train, terms, ctx);
+    return median(test.map((p) => Math.abs(Math.log10(p.mcap_usd as number) - dot(valueFeats(p, terms, ctx), beta))).map((e) => Math.pow(10, e)));
+  });
+  const first = splits[0];
+  const beta0 = fitValue(first.train, terms, ctx);
+  const residuals = first.test.map((p) => Math.log10(p.mcap_usd as number) - dot(valueFeats(p, terms, ctx), beta0));
+  return { miss: misses.reduce((a, b) => a + b, 0) / misses.length, splits: misses, residuals };
 }
 
-function flatMissValue(comps: SnapshotProtocol[]): { loo: number; wf: number } {
+// 5-fold cross-validation, repeated over 5 seeds; the mean of the five
+// seed-medians, in x. Same shape as the value model's headline numbers.
+function cvMissValue(comps: SnapshotProtocol[], terms: string[], ctx: ValueCtx): { mean: number; seeds: number[] } {
+  const seeds: number[] = [];
+  for (let s = 0; s < 5; s++) {
+    const rng = mulberry32(SEED + 100 + s);
+    const idx = comps.map((_, i) => i);
+    for (let i = idx.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      const t = idx[i];
+      idx[i] = idx[j];
+      idx[j] = t;
+    }
+    const errs: number[] = [];
+    for (let fold = 0; fold < 5; fold++) {
+      const testIdx = new Set(idx.filter((_, i) => i % 5 === fold));
+      const train = comps.filter((_, i) => !testIdx.has(i));
+      const test = comps.filter((_, i) => testIdx.has(i));
+      const beta = fitValue(train, terms, ctx);
+      for (const p of test) {
+        errs.push(Math.abs(Math.log10(p.mcap_usd as number) - dot(valueFeats(p, terms, ctx), beta)));
+      }
+    }
+    seeds.push(median(errs.map((e) => Math.pow(10, e))));
+  }
+  return { mean: seeds.reduce((a, b) => a + b, 0) / seeds.length, seeds };
+}
+
+function flatMissValue(comps: SnapshotProtocol[]): { loo: number; wf: number; wfSplits: number[] } {
   const ys = comps.map((p) => Math.log10(p.mcap_usd as number));
   const looErrs: number[] = [];
   for (let i = 0; i < comps.length; i++) {
     const rest = ys.filter((_, j) => j !== i);
     looErrs.push(Math.abs(ys[i] - median(rest)));
   }
-  const { train, test } = wfSplit(comps);
-  const trainMed = median(train.map((p) => Math.log10(p.mcap_usd as number)));
-  const wfErrs = test.map((p) => Math.abs(Math.log10(p.mcap_usd as number) - trainMed));
-  return { loo: median(looErrs.map((e) => Math.pow(10, e))), wf: median(wfErrs.map((e) => Math.pow(10, e))) };
+  const splits = wfSplits(comps).map(({ train, test }) => {
+    const trainMed = median(train.map((p) => Math.log10(p.mcap_usd as number)));
+    return median(test.map((p) => Math.abs(Math.log10(p.mcap_usd as number) - trainMed)).map((e) => Math.pow(10, e)));
+  });
+  return { loo: median(looErrs.map((e) => Math.pow(10, e))), wf: splits.reduce((a, b) => a + b, 0) / splits.length, wfSplits: splits };
 }
 
 const VALUE_CANDIDATES: { term: string; label: string; note: string }[] = [
-  { term: 'growth', label: '7-day TVL growth', note: 'Recent TVL momentum, clamped to [-60%, +120%]. Kept on the two pre-registered tests (LOO and walk-forward both improve about 9%); the 200-split win share is below half, so the benefit is clearest in those two tests and noisier across random splits — the coefficient is -1.23 ± 1.40, not tightly estimated.' },
+  { term: 'growth', label: '7-day TVL growth', note: 'Recent TVL momentum, clamped to [-60%, +120%].' },
   { term: 'age', label: 'Age (years listed)', note: 'Years since the protocol first recorded a listing date.' },
   { term: 'chains', label: 'Chain count (log1p)', note: 'Number of chains the protocol runs on.' },
   { term: 'curve', label: 'Size curvature (logTVL^2)', note: 'Lets the size slope bend at the top end.' },
@@ -425,10 +492,14 @@ interface ValueModel {
   terms: string[];
   loo: number;
   wf: number;
+  wfSplits: number[];
+  cv: number;
+  cvSeeds: number[];
   baseLoo: number;
   baseWf: number;
   flatLoo: number;
   flatWf: number;
+  flatWfSplits: number[];
   termTable: TermResult[];
   rivals: RivalResult[];
   q10: number;
@@ -465,6 +536,7 @@ function buildValueModel(comps: SnapshotProtocol[], ctx: ValueCtx): ValueModel {
   const loo = looMissValue(comps, terms, ctx);
   const wf = wfMissValue(comps, terms, ctx);
   const flat = flatMissValue(comps);
+  const cv = cvMissValue(comps, terms, ctx);
 
   // Bootstrap standard errors on the final coefficients (200 resamples).
   const rngB = mulberry32(SEED);
@@ -485,9 +557,9 @@ function buildValueModel(comps: SnapshotProtocol[], ctx: ValueCtx): ValueModel {
     return Math.sqrt(v);
   });
 
-  // The kin coefficient and its bootstrap SE, from the size+growth+kin fit:
-  // this is the own-token-share test. Only a handful of comps carry the
-  // kin flag, so the estimate is noisy by construction.
+  // The kin coefficient and its bootstrap SE, from the size+kin fit (the
+  // final terms plus kin): this is the own-token-share test. Only a handful
+  // of comps carry the kin flag, so the estimate is noisy by construction.
   const kinTerms = [...terms.filter((t) => t !== 'kin'), 'kin'];
   const kinBetaFull = fitValue(comps, kinTerms, ctx);
   const kinIdx = kinTerms.indexOf('kin') + 2;
@@ -506,6 +578,26 @@ function buildValueModel(comps: SnapshotProtocol[], ctx: ValueCtx): ValueModel {
   const kinMean = kinBoots.reduce((a, b) => a + b, 0) / Math.max(1, kinBoots.length);
   const kinSe = Math.sqrt(kinBoots.reduce((a, b) => a + (b - kinMean) * (b - kinMean), 0) / Math.max(1, kinBoots.length - 1));
   const kinCompsN = comps.filter((p) => ctx.kinOf(p)).length;
+
+  // The growth coefficient and its bootstrap SE, from the size+growth fit.
+  // The growth term's note quotes it, so it is computed here from the same
+  // comps instead of copied from a previous run.
+  const growthTerms = [...terms.filter((t) => t !== 'growth'), 'growth'];
+  const growthIdx = growthTerms.indexOf('growth') + 2;
+  const growthBeta = fitValue(comps, growthTerms, ctx)[growthIdx];
+  const rngG = mulberry32(SEED + 11);
+  const growthBoots: number[] = [];
+  for (let r = 0; r < BOOTSTRAP_REPS; r++) {
+    const sample: SnapshotProtocol[] = [];
+    for (let i = 0; i < comps.length; i++) sample.push(comps[Math.floor(rngG() * comps.length)]);
+    try {
+      growthBoots.push(fitValue(sample, growthTerms, ctx)[growthIdx]);
+    } catch {
+      // skip singular resample
+    }
+  }
+  const growthMean = growthBoots.reduce((a, b) => a + b, 0) / Math.max(1, growthBoots.length);
+  const growthSe = Math.sqrt(growthBoots.reduce((a, b) => a + (b - growthMean) * (b - growthMean), 0) / Math.max(1, growthBoots.length - 1));
 
   // Term table: each candidate added to the size-only base, both tests.
   // The control row is the growth of ANOTHER row (next comp in slug order):
@@ -553,24 +645,41 @@ function buildValueModel(comps: SnapshotProtocol[], ctx: ValueCtx): ValueModel {
   }
   for (const c of VALUE_CANDIDATES) {
     const t = candTests.get(c.term) as { loo: number; wf: number };
+    const winShare = (termWins.get(c.term) as number) / SPLIT_REPS;
+    // Growth's note is written from the measured numbers, not from a
+    // previous run: on a different comp set the verdict changes, and a
+    // note copied from that run would claim the opposite of the table.
+    const note =
+      c.term === 'growth'
+        ? `${c.note} LOO x${t.loo.toFixed(2)} vs base x${baseLoo.toFixed(2)}, walk-forward x${t.wf.toFixed(2)} vs base x${baseWf.toFixed(2)} — ${kept.has('growth') ? 'passes both tests and is kept' : 'fails the walk-forward test, so it is not kept'}. Win share ${Math.round(winShare * 100)}% over 200 splits, and the coefficient is ${growthBeta.toFixed(2)} ± ${growthSe.toFixed(2)} — not tightly estimated.`
+        : c.note;
     termTable.push({
       term: c.term,
       label: c.label,
       loo: t.loo,
       wf: t.wf,
-      winShare: (termWins.get(c.term) as number) / SPLIT_REPS,
+      winShare,
       verdict: kept.has(c.term) ? 'kept' : 'tested-not-kept',
-      note: c.note,
+      note,
     });
   }
+  // The control note is written from the measured numbers too. A nonsense
+  // feature that passes the headline tests on some comp sets is the
+  // evidence that the median miss is noisy at this size — the note must
+  // say so, not claim the control does not help when the table shows it does.
+  const controlWinShare = (termWins.get('control') as number) / SPLIT_REPS;
+  const controlPasses = controlLoo < baseLoo * 0.99 && controlWf < baseWf * 0.99;
+  const controlNote = controlPasses
+    ? `Next comp in slug order, same window. A nonsense feature — and on these ${comps.length} comps it passes both headline tests (LOO x${controlLoo.toFixed(2)}, walk-forward x${controlWf.toFixed(2)}), with a ${Math.round(controlWinShare * 100)}% win share over 200 splits. The median miss is noisy at this size; that is why the win share is shown next to every term and why no term is kept on a hairline win. Sign-flipped momentum is not a control: it is the same fit with the sign flipped.`
+    : 'Next comp in slug order, same window. Must not help — and it does not. Sign-flipped momentum is not a control: it is the same fit with the sign flipped.';
   termTable.push({
     term: 'control',
     label: 'CONTROL: growth of another row',
     loo: controlLoo,
     wf: controlWf,
-    winShare: (termWins.get('control') as number) / SPLIT_REPS,
+    winShare: controlWinShare,
     verdict: 'control',
-    note: 'Next comp in slug order, same window. Must not help — and it does not. Sign-flipped momentum is not a control: it is the same fit with the sign flipped.',
+    note: controlNote,
   });
   const rivals: RivalResult[] = VALUE_RIVAL_DEFS.map((r) => {
     const looR = r.terms === 'flat' ? flat.loo : looMissValue(comps, r.terms, ctx).miss;
@@ -582,7 +691,7 @@ function buildValueModel(comps: SnapshotProtocol[], ctx: ValueCtx): ValueModel {
   // LOO coverage by 2-fold split on listed_at: quantiles from fold A's LOO
   // residuals, coverage on fold B's LOO predictions, and vice versa.
   const looRes = loo.residuals;
-  const { train: older, test: newer } = wfSplit(comps);
+  const { train: older, test: newer } = wfSplits(comps)[0];
   const olderIdx = new Set(older.map((p) => p.slug));
   const resA = looRes.filter((_, i) => olderIdx.has(comps[i].slug));
   const resB = looRes.filter((_, i) => !olderIdx.has(comps[i].slug));
@@ -627,10 +736,14 @@ function buildValueModel(comps: SnapshotProtocol[], ctx: ValueCtx): ValueModel {
     terms,
     loo: loo.miss,
     wf: wf.miss,
+    wfSplits: wf.splits,
+    cv: cv.mean,
+    cvSeeds: cv.seeds,
     baseLoo,
     baseWf,
     flatLoo: flat.loo,
     flatWf: flat.wf,
+    flatWfSplits: flat.wfSplits,
     termTable,
     rivals,
     q10: quantile(looRes, 0.1),
@@ -699,17 +812,51 @@ function looBrierOdds(peers: SnapshotProtocol[], terms: string[], ctx: OddsCtx, 
   return s / peers.length;
 }
 
-function wfBrierOdds(peers: SnapshotProtocol[], terms: string[], ctx: OddsCtx, fullBeta: number[]): number {
+function wfBrierOdds(peers: SnapshotProtocol[], terms: string[], ctx: OddsCtx, fullBeta: number[]): { mean: number; splits: number[] } {
   const dated = [...peers].sort((a, b) => ((a.listed_at as string) < (b.listed_at as string) ? -1 : 1));
-  const half = Math.floor(dated.length / 2);
-  const beta = fitOdds(dated.slice(0, half), terms, ctx, fullBeta);
-  let s = 0;
-  for (const p of dated.slice(half)) {
-    const pred = sigmoid(dot(oddsFeats(p, terms, ctx), beta));
-    const y = isPreToken(p) ? 0 : 1;
-    s += (pred - y) * (pred - y);
+  const splits = WF_FRACTIONS.map((frac) => {
+    const cut = Math.floor(dated.length * frac);
+    const beta = fitOdds(dated.slice(0, cut), terms, ctx, fullBeta);
+    let s = 0;
+    for (const p of dated.slice(cut)) {
+      const pred = sigmoid(dot(oddsFeats(p, terms, ctx), beta));
+      const y = isPreToken(p) ? 0 : 1;
+      s += (pred - y) * (pred - y);
+    }
+    return s / Math.max(1, dated.length - cut);
+  });
+  return { mean: splits.reduce((a, b) => a + b, 0) / splits.length, splits };
+}
+
+// 5-fold cross-validation Brier, repeated over 5 seeds; the mean.
+function cvBrierOdds(peers: SnapshotProtocol[], terms: string[], ctx: OddsCtx, fullBeta: number[]): number {
+  const means: number[] = [];
+  for (let s = 0; s < 5; s++) {
+    const rng = mulberry32(SEED + 200 + s);
+    const idx = peers.map((_, i) => i);
+    for (let i = idx.length - 1; i > 0; i--) {
+      const j = Math.floor(rng() * (i + 1));
+      const t = idx[i];
+      idx[i] = idx[j];
+      idx[j] = t;
+    }
+    let ss = 0;
+    let nn = 0;
+    for (let fold = 0; fold < 5; fold++) {
+      const testIdx = new Set(idx.filter((_, i) => i % 5 === fold));
+      const train = peers.filter((_, i) => !testIdx.has(i));
+      const test = peers.filter((_, i) => testIdx.has(i));
+      const beta = fitOdds(train, terms, ctx, fullBeta);
+      for (const p of test) {
+        const pred = sigmoid(dot(oddsFeats(p, terms, ctx), beta));
+        const y = isPreToken(p) ? 0 : 1;
+        ss += (pred - y) * (pred - y);
+        nn++;
+      }
+    }
+    means.push(ss / Math.max(1, nn));
   }
-  return s / Math.max(1, dated.length - half);
+  return means.reduce((a, b) => a + b, 0) / means.length;
 }
 
 const ODDS_CANDIDATES: { term: string; label: string; note: string }[] = [
@@ -732,6 +879,8 @@ interface OddsModel {
   terms: string[];
   looBrier: number;
   wfBrier: number;
+  wfSplits: number[];
+  cvBrier: number;
   baseLoo: number;
   baseWf: number;
   baseBrier: number;
@@ -745,7 +894,7 @@ function buildOddsModel(peers: SnapshotProtocol[], ctx: OddsCtx): OddsModel {
   const fullBeta = (terms: string[]): number[] => fitOdds(peers, terms, ctx);
   const baseBeta = fullBeta([]);
   const baseLoo = looBrierOdds(peers, [], ctx, baseBeta);
-  const baseWf = wfBrierOdds(peers, [], ctx, baseBeta);
+  const baseWf = wfBrierOdds(peers, [], ctx, baseBeta).mean;
 
   // Selection rule (stated on the board): a term is kept only if adding it
   // to the age+size base lowers the Brier score by at least 0.002 in BOTH
@@ -758,7 +907,7 @@ function buildOddsModel(peers: SnapshotProtocol[], ctx: OddsCtx): OddsModel {
   for (const cand of ODDS_CANDIDATES) {
     const fb = fullBeta([cand.term]);
     const loo = looBrierOdds(peers, [cand.term], ctx, fb);
-    const wf = wfBrierOdds(peers, [cand.term], ctx, fb);
+    const wf = wfBrierOdds(peers, [cand.term], ctx, fb).mean;
     candTests.set(cand.term, { loo, wf, beta: fb });
     if (loo < baseLoo - 0.002 && wf < baseWf - 0.002) kept.add(cand.term);
   }
@@ -766,6 +915,7 @@ function buildOddsModel(peers: SnapshotProtocol[], ctx: OddsCtx): OddsModel {
   const beta = fullBeta(terms);
   const looBrier = looBrierOdds(peers, terms, ctx, beta);
   const wfBrier = wfBrierOdds(peers, terms, ctx, beta);
+  const cvBrier = cvBrierOdds(peers, terms, ctx, beta);
 
   // Term table: each candidate added to the age+size base, both tests.
   const termTable: TermResult[] = [];
@@ -842,7 +992,7 @@ function buildOddsModel(peers: SnapshotProtocol[], ctx: OddsCtx): OddsModel {
     return {
       name: r.name,
       loo: looBrierOdds(peers, r.terms, ctx, fb),
-      wf: wfBrierOdds(peers, r.terms, ctx, fb),
+      wf: wfBrierOdds(peers, r.terms, ctx, fb).mean,
       winShareVsFinal: (rivalWins.get(r.name) as number) / SPLIT_REPS,
     };
   });
@@ -852,7 +1002,7 @@ function buildOddsModel(peers: SnapshotProtocol[], ctx: OddsCtx): OddsModel {
   if (terms.includes('chains')) labels.push('chains');
   if (terms.includes('category')) labels.push(...ctx.catList.map((c) => `cat: ${c}`));
   if (terms.includes('kin')) labels.push('family token exists');
-  return { beta, labels, terms, looBrier, wfBrier, baseLoo, baseWf, baseBrier, termTable, rivals };
+  return { beta, labels, terms, looBrier, wfBrier: wfBrier.mean, wfSplits: wfBrier.splits, cvBrier, baseLoo, baseWf, baseBrier, termTable, rivals };
 }
 
 // ---------- board, farm plans, accounting ----------
@@ -861,12 +1011,27 @@ const BRIDGE_CATS = new Set(['Bridge', 'Canonical Bridge', 'Cross Chain Bridge']
 const STAKING_CATS = new Set(['Liquid Staking', 'Liquid Restaking', 'Restaking', 'Staking Pool']);
 const WRAPPED_RE = /\bwrapped\b|\bstaked\b|\bstaking\b/i;
 
-function depositFor(tvl: number): number {
-  if (tvl >= 1e9) return 1000;
-  if (tvl >= 5e8) return 500;
-  if (tvl >= 2e8) return 250;
-  if (tvl >= 1e8) return 150;
-  return 100;
+// ---------- farm scenario (base case) ----------
+// The farmer is a committed retail farmer with a flat $2,000 stake per farm.
+// The drop pool is 7% of the expected value (implied value x odds) and the
+// farmer's share is their deposit as a fraction of the protocol's TVL: every
+// TVL dollar is assumed to earn points pro-rata. That is the conservative
+// end — if only some TVL earns the drop, the true share (and the drop) is
+// larger — and it needs no invented fraction. A $1,000 stake leaves only 9
+// FARM (the board would say almost nothing pays); a $10,000 stake says
+// nearly everything pays. Both are shown in the sensitivity table.
+// Costs are fixed gas only: $5 to fund a fresh wallet, $2.50 to deposit,
+// $1.50 to claim, $2.00 to unwind = $11. The base plan is deposit + hold +
+// claim: no weekly paid action. The verdict counts gas only; the $2,000 is
+// locked for the hold (30-60 days) and its forgone yield is a sensitivity
+// row, not part of the verdict.
+const FARM_DEPOSIT = 2000;
+const DROP_SHARE = 0.07;
+const FARM_COST_USD = 11;
+const FARM_HORIZON_WEEKS = 52;
+
+function farmVerdict(net: number): BoardRow['verdict'] {
+  return net >= 10 ? 'FARM' : net >= 0 ? 'MARGINAL' : 'SKIP';
 }
 
 function holdDaysFor(age: number | null): number {
@@ -896,13 +1061,38 @@ export function buildModel(snapshot: Snapshot): ModelResult {
     return q ? q.name : null;
   };
 
-  // Comps: traded protocols with a usable cap and a listing date.
-  const comps = snapshot.protocols.filter(
-    (p) => !isPreToken(p) && typeof p.mcap_usd === 'number' && (p.mcap_usd as number) > 0 && p.listed_at,
-  );
-  const compsPriced = snapshot.protocols.filter(
-    (p) => !isPreToken(p) && typeof p.mcap_usd === 'number' && (p.mcap_usd as number) > 0,
-  ).length;
+  // Comps: traded protocols, cleaned by an explicit policy (each rule is
+  // stated on the Coverage tab with its count). A comp must price the
+  // protocol itself, so the cleaning removes everything whose cap does not:
+  // the source's "no usable cap" sentinel (mcap <= 0), undated protocols
+  // (no age, and walk-forward cannot order them), wrapped / staked /
+  // versioned names (the token mirrors another asset, not the protocol),
+  // duplicate tickers (one observation counted twice — keep the larger
+  // TVL), and caps over 10x TVL (not a comparable protocol value).
+  const traded = snapshot.protocols.filter((p) => !isPreToken(p));
+  const usable = traded.filter((p) => typeof p.mcap_usd === 'number' && (p.mcap_usd as number) > 0);
+  const datedUsable = usable.filter((p) => p.listed_at);
+  const unwrapped = datedUsable.filter((p) => !isVersioned(p) && !WRAPPED_RE.test(p.name));
+  const droppedWrapped = datedUsable.filter((p) => isVersioned(p) || WRAPPED_RE.test(p.name)).map((p) => p.slug);
+  const byTicker = new Map<string, SnapshotProtocol>();
+  for (const p of [...unwrapped].sort((a, b) => b.tvl_usd - a.tvl_usd)) {
+    const s = (p.symbol || '').toLowerCase();
+    if (s && !byTicker.has(s)) byTicker.set(s, p);
+    else if (!s) byTicker.set(`__nosym__${p.slug}`, p);
+  }
+  const deduped = [...byTicker.values()];
+  const comps = deduped.filter((p) => (p.mcap_usd as number) / p.tvl_usd <= 10);
+  const droppedRatio = deduped.filter((p) => (p.mcap_usd as number) / p.tvl_usd > 10).map((p) => p.slug);
+  const excludedCompSlugs = new Set([...droppedWrapped, ...droppedRatio]);
+  const compsPriced = usable.length;
+  const compsCleaning = [
+    { stage: 'traded (a token is recorded)', count: traded.length, note: 'No price to learn from without a token.' },
+    { stage: 'usable cap (mcap > 0)', count: usable.length, note: 'mcap <= 0 is the source sentinel for "no usable cap" (16 protocols); null is no cap at all (272).' },
+    { stage: 'dated (listed_at present)', count: datedUsable.length, note: 'Age and walk-forward ordering need a listing date.' },
+    { stage: 'not wrapped / staked / versioned', count: unwrapped.length, note: 'The token mirrors another asset, not the protocol. Dropped: ' + (droppedWrapped.join(', ') || 'none') + '.' },
+    { stage: 'one per ticker (larger TVL kept)', count: deduped.length, note: 'A duplicate ticker would count one observation twice.' },
+    { stage: 'mcap / TVL <= 10', count: comps.length, note: 'A cap over 10x TVL is not a comparable protocol value. Dropped: ' + (droppedRatio.join(', ') || 'none') + '.' },
+  ];
   // Peers for the odds model: every protocol with a listing date.
   const peers = snapshot.protocols.filter((p) => p.listed_at);
 
@@ -970,23 +1160,24 @@ export function buildModel(snapshot: Snapshot): ModelResult {
     const age = ageDays(asOf, p.listed_at);
     const holdDays = holdDaysFor(age);
     const holdUntil = addDays(asOf, holdDays);
-    const deposit = depositFor(p.tvl_usd);
-    const weeks = Math.ceil(holdDays / 7);
-    const totalCost = 8 + 2 * weeks;
-    const expectedDrop = (ev * 0.07 * deposit) / (0.1 * p.tvl_usd);
+    const deposit = FARM_DEPOSIT;
+    const totalCost = FARM_COST_USD;
+    const expectedDrop = (ev * DROP_SHARE * deposit) / p.tvl_usd;
     const net = expectedDrop - totalCost;
-    const verdict: BoardRow['verdict'] = net >= 10 ? 'FARM' : net >= 0 ? 'MARGINAL' : 'SKIP';
-    const wBreak = (expectedDrop - 8) / 2;
-    const breakEven = wBreak > 0 && wBreak <= 52 ? addDays(asOf, Math.round(wBreak * 7)) : null;
+    const verdict = farmVerdict(net);
+    // Costs are fixed gas, not weekly: there is no break-even date. The plan
+    // either pays (net >= 0) or it does not; if the token has not listed by
+    // the horizon, unwind.
+    const breakEven = null;
     const chain0 = p.chains.length > 0 ? p.chains[0] : 'its home chain';
     const steps: string[] = [
-      `Set up a fresh wallet and fund it with $${deposit} USDC plus $5 for gas on ${chain0}. Do not reuse a wallet that farmed another protocol. (${asOf}, 5 min, $0)`,
+      `Set up a fresh wallet and fund it with $${deposit} USDC plus $5 for gas on ${chain0}. Do not reuse a wallet that farmed another protocol. (${asOf}, 5 min, $5 gas)`,
       `Deposit $${deposit} into ${p.name} through the official app only — take the link from the protocol docs, never from a DM. Main action gas about $2.50. (${asOf}, 15 min, $${deposit} + $2.50)`,
-      `Repeat the qualifying action once a week with the same wallet until the hold ends. Weekly gas about $2.00, 10 min per week. (cadence: weekly, $${(2 * weeks).toFixed(2)} over ${weeks} weeks)`,
-      `Hold the position until ${holdUntil}. Do not withdraw early: most drops require the deposit to be present at the snapshot. Capital locked: $${deposit} for ${holdDays} days.`,
-      `Check the official claim page on ${holdUntil}. If no token is announced, keep holding until the horizon. Claim gas about $1.50.`,
-      `Break-even check: expected drop $${expectedDrop.toFixed(2)} against total cost $${totalCost.toFixed(2)} is net $${net.toFixed(2)}. Break-even date: ${breakEven ?? (wBreak > 52 ? 'beyond the 52-week horizon' : 'never — costs exceed the expected drop')}. If the token has not listed by then, unwind.`,
-      `Unwind by ${horizonDate} if no token has listed: withdraw the deposit and stop the weekly action. Exit gas about $2.00. Do not leave capital parked past the horizon.`,
+      `Hold the position until ${holdUntil}. Do not withdraw early: most drops require the deposit to be present at the snapshot. No weekly paid action — the deposit itself earns the points. Capital locked: $${deposit} for ${holdDays} days.`,
+      `Check the official claim page on ${holdUntil}. If a token is announced, claim it the same day. Claim gas about $1.50.`,
+      `If no token is announced, keep holding until the horizon (${horizonDate}). The drop is only paid if the token launches; a token that launches after the horizon pays this farm nothing.`,
+      `Break-even check: expected drop $${expectedDrop.toFixed(2)} against fixed gas $${totalCost.toFixed(2)} is net $${net.toFixed(2)}. Costs are fixed, so there is no break-even date — the plan either pays or it does not.`,
+      `Unwind by ${horizonDate} if no token has listed: withdraw the deposit and stop. Exit gas about $2.00. Do not leave capital parked past the horizon.`,
       `Log every action (date, tx hash, amount) in a farm log. A written log is what proves the position if a claim is disputed. (5 min, $0)`,
     ];
     const band = rankSamples[i].length > 0 ? rankSamples[i] : [i + 1];
@@ -1031,6 +1222,7 @@ export function buildModel(snapshot: Snapshot): ModelResult {
 
   // Coverage accounting: every one of the 758 protocols in exactly one group.
   const boardSet = new Set(rows.map((r) => r.slug));
+  const compSlugs = new Set(comps.map((p) => p.slug));
   const groups = new Map<string, { count: number; detail: string }>();
   const put = (label: string, detail: string) => {
     const g = groups.get(label) ?? { count: 0, detail };
@@ -1040,8 +1232,10 @@ export function buildModel(snapshot: Snapshot): ModelResult {
   for (const p of snapshot.protocols) {
     if (boardSet.has(p.slug)) {
       put(watch.has(p.slug) ? 'Ranked — watchlist' : 'Ranked — early, below the floor', 'on the board');
-    } else if (!isPreToken(p) && typeof p.mcap_usd === 'number' && (p.mcap_usd as number) > 0 && p.listed_at) {
+    } else if (compSlugs.has(p.slug)) {
       put('Priced comp — traded, usable cap', 'fits the value model');
+    } else if (excludedCompSlugs.has(p.slug)) {
+      put('Out — excluded as a comp', 'wrapped / versioned name, or mcap over 10x TVL');
     } else if (!isPreToken(p)) {
       put('Token recorded, no usable cap', 'a token exists but no cap or no listing date');
     } else if (p.category === 'CEX') {
@@ -1063,6 +1257,53 @@ export function buildModel(snapshot: Snapshot): ModelResult {
     marginal: rows.filter((r) => r.verdict === 'MARGINAL').length,
     skip: rows.filter((r) => r.verdict === 'SKIP').length,
   };
+
+  // Farm sensitivity: the same rows re-scored under other scenarios. The
+  // verdicts move a lot with the assumptions — that is the point of the
+  // table: the base case is a choice, and the reader can see what the
+  // choice is doing instead of taking one number on trust.
+  const countVerdicts = (dropOf: (r: BoardRow) => number, costOf: (r: BoardRow) => number) => {
+    let farm = 0;
+    let marginal = 0;
+    let skip = 0;
+    for (const r of rows) {
+      const v = farmVerdict(dropOf(r) - costOf(r));
+      if (v === 'FARM') farm++;
+      else if (v === 'MARGINAL') marginal++;
+      else skip++;
+    }
+    return { farm, marginal, skip };
+  };
+  const dropAt = (deposit: number, eligFrac: number) => (r: BoardRow) =>
+    (r.expected_value_usd * DROP_SHARE * deposit) / (eligFrac * r.tvl_usd);
+  const holdWeeks = (r: BoardRow) => Math.ceil(holdDaysFor(r.age_days) / 7);
+  const farmSensitivity: FarmSensitivityRow[] = [
+    {
+      label: 'Strict: $1,000 stake',
+      ...countVerdicts(dropAt(1000, 1), () => FARM_COST_USD),
+      note: 'Half the base stake. The board would say almost nothing pays.',
+    },
+    {
+      label: 'Base: $2,000 stake',
+      ...farmCounts,
+      note: 'The verdicts on the board. Deposit as a fraction of TVL; gas $11.',
+    },
+    {
+      label: 'Generous: half of TVL earns the drop',
+      ...countVerdicts(dropAt(FARM_DEPOSIT, 0.5), () => FARM_COST_USD),
+      note: 'If only half of TVL earns points, the farmer\u2019s share doubles.',
+    },
+    {
+      label: 'Weekly $2 action during the hold',
+      ...countVerdicts(dropAt(FARM_DEPOSIT, 1), (r) => FARM_COST_USD + 2 * holdWeeks(r)),
+      note: 'Some drops need a weekly paid action; the base plan assumes hold-only.',
+    },
+    {
+      label: 'Counting forgone yield at 5% over the hold',
+      ...countVerdicts(dropAt(FARM_DEPOSIT, 1), (r) => FARM_COST_USD + (FARM_DEPOSIT * 0.05 * holdDaysFor(r.age_days)) / 365),
+      note: 'The $2,000 locked for the hold could earn ~5% elsewhere. Not in the verdict.',
+    },
+  ];
 
   const checksum = fnv1aHex(
     rows.map((r) => `${r.rank},${r.slug},${Math.round(r.implied_value_usd)}`).join('\n'),
@@ -1094,6 +1335,7 @@ export function buildModel(snapshot: Snapshot): ModelResult {
     floorUsd: snapshot.floor_usd,
     compsN: comps.length,
     compsPriced,
+    compsCleaning,
     peersN: peers.length,
     peersBaseRate: peers.filter((p) => !isPreToken(p)).length / peers.length,
     valueBeta: value.beta,
@@ -1103,10 +1345,14 @@ export function buildModel(snapshot: Snapshot): ModelResult {
     valueRivals: value.rivals,
     valueLoo: value.loo,
     valueWf: value.wf,
+    valueWfSplits: value.wfSplits,
+    valueCv: value.cv,
+    valueCvSeeds: value.cvSeeds,
     valueBaseLoo: value.baseLoo,
     valueBaseWf: value.baseWf,
     valueFlatLoo: value.flatLoo,
     valueFlatWf: value.flatWf,
+    valueFlatWfSplits: value.flatWfSplits,
     rangeHonesty: value.rangeHonesty,
     oddsBeta: odds.beta,
     oddsLabels: odds.labels,
@@ -1114,12 +1360,23 @@ export function buildModel(snapshot: Snapshot): ModelResult {
     oddsRivals: odds.rivals,
     oddsLooBrier: odds.looBrier,
     oddsWfBrier: odds.wfBrier,
+    oddsWfSplits: odds.wfSplits,
+    oddsCvBrier: odds.cvBrier,
     oddsBaseLoo: odds.baseLoo,
     oddsBaseWf: odds.baseWf,
     oddsBaseBrier: odds.baseBrier,
     kinBeta: value.kinBeta,
     kinSe: value.kinSe,
     kinCompsN: value.kinCompsN,
+    farmScenario: {
+      depositUsd: FARM_DEPOSIT,
+      dropShare: DROP_SHARE,
+      eligibleNote: 'the deposit as a fraction of TVL (every TVL dollar earns points pro-rata)',
+      horizonWeeks: FARM_HORIZON_WEEKS,
+      costUsd: FARM_COST_USD,
+      costBreakdown: '$5 wallet funding + $2.50 deposit gas + $1.50 claim gas + $2.00 exit gas',
+    },
+    farmSensitivity,
     farmCounts,
     accounting,
     boardN: rows.length,
