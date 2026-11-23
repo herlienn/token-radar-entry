@@ -2,60 +2,95 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Token Radar v4 — which pre-token protocols are worth farming</title>
+<title>Token Radar v5 — the next 198 token launches, ranked by implied value</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 <header>
-  <h1>Token Radar v4</h1>
-  <p class="sub">Which pre-token protocols are worth farming — ranked by the value a token
-  would have if it launched, times the odds it ever does. Snapshot <span id="asof">—</span>,
-  <span id="counts">—</span>. Static page, no network.</p>
-  <div id="kpi" class="kpi"></div>
-  <nav class="tabs" id="tabs">
-    <button data-tab="board" class="active">Board</button>
-    <button data-tab="model">Model &amp; tests</button>
-    <button data-tab="coverage">Coverage</button>
-  </nav>
+  <h1>Token Radar <span class="gold">v5</span> — the next 198 token launches, ranked by implied value</h1>
+  <p>Every pre-token protocol in the sealed 14 November 2026 snapshot (758 protocols), valued by how much its token would be worth if it launched today. The value model is a size-only log-log OLS on 90 traded comparables; the odds model is a logistic listing model. Every number on this page was computed by this run — nothing is copied from an earlier run.</p>
+  <p id="asof"></p>
 </header>
+<div class="kpis" id="kpis"></div>
+<nav class="tabs" id="tabs">
+  <button data-tab="board" class="active">Board</button>
+  <button data-tab="model">Model &amp; tests</button>
+  <button data-tab="coverage">Coverage</button>
+  <button data-tab="farms">Best farms</button>
+</nav>
 <main>
-  <section id="tab-board" class="tabpage">
-    <div class="filters">
-      <input id="q" type="search" placeholder="Search name or slug…" aria-label="Search">
-      <select id="fcat" aria-label="Category"><option value="">All categories</option></select>
-      <select id="fverdict" aria-label="Farm verdict">
-        <option value="">All verdicts</option>
-        <option>FARM</option><option>MARGINAL</option><option>SKIP</option>
+  <section class="tab active" id="tab-board">
+    <div class="controls">
+      <input type="search" id="q" placeholder="Search name or slug…" aria-label="Search">
+      <select id="cat" aria-label="Category"><option value="">All categories</option></select>
+      <select id="verdict" aria-label="Verdict">
+        <option value="">All verdicts</option><option>FARM</option><option>MARGINAL</option><option>SKIP</option>
       </select>
-      <span id="shown" class="shown"></span>
+      <label><input type="checkbox" id="watchonly"> Watchlist only</label>
+      <span id="count" class="slug"></span>
     </div>
     <table id="board">
       <thead><tr>
-        <th>#</th><th>Protocol</th><th>TVL</th><th>7d</th><th>Age</th>
-        <th>Implied value</th><th>Odds</th><th>Expected value</th>
-        <th>Share</th><th>Net</th><th>Verdict</th>
+        <th class="sortable" data-sort="rank">Rank</th>
+        <th class="sortable" data-sort="name">Protocol</th>
+        <th class="sortable" data-sort="category">Category</th>
+        <th class="num sortable" data-sort="tvl_usd">TVL</th>
+        <th class="num sortable" data-sort="change_7d">7d %</th>
+        <th class="num sortable" data-sort="implied_value_usd">Implied $</th>
+        <th class="num sortable" data-sort="odds">Odds</th>
+        <th class="num sortable" data-sort="expected_value_usd">EV $</th>
+        <th class="sortable" data-sort="verdict">Farm</th>
+        <th class="num sortable" data-sort="net_usd">Net $</th>
       </tr></thead>
-      <tbody></tbody>
+      <tbody id="board-body"></tbody>
     </table>
-    <p class="note">Rank is by implied value. Expected value = implied × odds × own-token
-    share. Net = expected airdrop slice − farm cost (see the Model &amp; tests tab for
-    the slice formula). Click a row for the farm plan and the log contributions.</p>
+    <p class="slug">Click a row for its farm plan, value range and rank band. Implied values are whole dollars — the gate's rule, rounded at the source.</p>
   </section>
-  <section id="tab-model" class="tabpage" hidden>
-    <div id="model"></div>
+
+  <section class="tab" id="tab-model">
+    <h2>Value model — size only, because the tests say so</h2>
+    <div class="card"><p class="callout mono" id="equation"></p><p id="value-summary"></p></div>
+    <h3>Held-out validation</h3>
+    <table id="validation"><thead><tr><th>Test</th><th class="num">Model</th><th class="num">Flat baseline</th><th class="num">× better</th></tr></thead><tbody></tbody></table>
+    <h3>Term selection — a term only joins if it clears 1% on BOTH tests</h3>
+    <table id="terms"><thead><tr><th>Term</th><th class="num">LOO</th><th class="num">LOO Δ</th><th class="num">Walk-forward mean</th><th class="num">WF Δ</th><th>Verdict</th></tr></thead><tbody></tbody></table>
+    <div id="control-note"></div>
+    <h3>Range honesty — do the printed ranges cover what they claim?</h3>
+    <table id="ranges"><thead><tr><th>Band</th><th class="num">Target</th><th class="num">LOO</th><th class="num">Walk-forward</th></tr></thead><tbody></tbody></table>
+    <h3>200-split win shares — how often a term beats size-only on a fresh 80/20 split</h3>
+    <table id="wins"><thead><tr><th>Term / rival</th><th class="num">Win share</th><th>Reading</th></tr></thead><tbody></tbody></table>
+    <h3>Odds model — will it list?</h3>
+    <div class="card"><p id="odds-summary"></p><p id="odds-groups"></p><p class="mono" id="odds-coefs"></p></div>
+    <div class="note" id="odds-wf-note"></div>
+    <h3>Listing rate by cohort — why walk-forward looks bad</h3>
+    <table id="cohorts"><thead><tr><th>Listed in</th><th class="num">Protocols</th><th class="num">Record a token</th><th class="num">Rate</th></tr></thead><tbody></tbody></table>
+    <h3>Comps cleaning — where the 90 fitted comparables came from</h3>
+    <table id="cleaning"><thead><tr><th>Step</th><th class="num">Count</th><th>Note</th></tr></thead><tbody></tbody></table>
   </section>
-  <section id="tab-coverage" class="tabpage" hidden>
-    <div id="coverage"></div>
+
+  <section class="tab" id="tab-coverage">
+    <h2>Coverage — every protocol in the snapshot, accounted for</h2>
+    <table id="coverage"><thead><tr><th>Bucket</th><th class="num">Count</th><th>What it means</th></tr></thead><tbody></tbody></table>
+    <h3>Live tokens, set aside (not ranked — they already trade)</h3>
+    <p>The 24 largest live-token protocols by market cap, shown so the board's exclusions are visible.</p>
+    <table id="live"><thead><tr><th>Protocol</th><th>Category</th><th class="num">TVL</th><th class="num">Market cap</th><th class="num">7d %</th></tr></thead><tbody></tbody></table>
   </section>
+
+  <section class="tab" id="tab-farms">
+    <h2>Best farms — the ten plans that pay best, by net dollars</h2>
+    <table id="best"><thead><tr><th>Rank</th><th>Protocol</th><th class="num">Implied $</th><th class="num">Odds</th><th class="num">EV $</th><th class="num">Expected drop $</th><th class="num">Net $</th></tr></thead><tbody></tbody></table>
+    <h3>Farm rules — fixed before the board was built</h3>
+    <div class="card"><p>Flat $2,000 stake. Drop pool 7% of expected value. Share = deposit ÷ FULL TVL. Fixed $11 gas. No weekly paid actions, no break-even date (costs are fixed, so there is none). FARM = net ≥ $10, MARGINAL = net ≥ $0, else SKIP. Every plan is eight concrete steps with costs and dates; click a board row to read one.</p></div>
+    <h3>Sensitivity — the FARM count when one assumption changes</h3>
+    <table id="sensitivity"><thead><tr><th>Variant</th><th class="num">FARM rows</th></tr></thead><tbody></tbody></table>
+  </section>
+  <div class="strip" id="integrity"></div>
 </main>
-<dialog id="detail"></dialog>
-<footer>
-  <p id="integrity" class="integrity"></p>
-  <p class="note">Deterministic: no wall clock, no unseeded randomness in the search or
-  the fit — two runs of the program produce byte-identical output. The snapshot is
-  sealed; nothing here fetches anything.</p>
-</footer>
+<footer id="footer"></footer>
+<dialog id="dlg">
+  <div class="dlg-head"><h2 id="dlg-title"></h2><button class="close" id="dlg-close">Close</button></div>
+  <div class="dlg-body" id="dlg-body"></div>
+</dialog>
 <script src="../data.js"></script>
 <script src="evidence.js"></script>
 <script src="app.js"></script>

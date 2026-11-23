@@ -1,277 +1,226 @@
-// Token Radar v4 — dashboard. Static page, no network. Reads window.RADAR
-// (the board, written by main.ts) and window.EVIDENCE (the validation
-// numbers, also written by main.ts). Written from scratch for this entry.
+// Token Radar v5 dashboard. Reads window.RADAR (data.js) and window.EVIDENCE
+// (evidence.js); no fetch, no network. Query params set the opening view:
+// ?tab=board|model|coverage|farms&sort=rank|implied_value_usd|expected_value_usd
+// &dir=asc|desc&filter=FARM|MARGINAL|SKIP&q=<text>
 (function () {
   'use strict';
   var R = window.RADAR;
   var E = window.EVIDENCE;
-  var rows = R.rows;
+  var params = new URLSearchParams(location.search);
 
-  function esc(s) {
-    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  function $(id) { return document.getElementById(id); }
+  function money(v) {
+    if (v >= 1e9) return '$' + (v / 1e9).toFixed(1) + 'B';
+    if (v >= 1e6) return '$' + (v / 1e6).toFixed(1) + 'M';
+    if (v >= 1e3) return '$' + (v / 1e3).toFixed(1) + 'k';
+    return '$' + Math.round(v);
   }
-  function money(n) {
-    if (!isFinite(n)) return '—';
-    if (n >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
-    if (n >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
-    if (n >= 1e3) return '$' + (n / 1e3).toFixed(1) + 'K';
-    return '$' + n.toFixed(0);
-  }
-  function pct(x, d) { return (x * 100).toFixed(d === undefined ? 1 : d) + '%'; }
-  function signed(n, d) { return (n >= 0 ? '+' : '−') + Math.abs(n).toFixed(d === undefined ? 1 : d) + '%'; }
-  function dollars(n) { return (n < 0 ? '−$' : '$') + Math.abs(n).toFixed(2); }
-  // FNV-1a, identical to the one in lib/model.ts — the in-browser self-test
-  // recomputes the checksum over the same canonical row string.
-  function fnv1aHex(s) {
-    var h = 0x811c9dc5;
-    for (var i = 0; i < s.length; i++) {
-      h ^= s.charCodeAt(i);
-      h = Math.imul(h, 0x01000193);
-    }
-    return (h >>> 0).toString(16).padStart(8, '0');
-  }
+  function moneyFull(v) { return '$' + Math.round(v).toLocaleString('en-US'); }
+  function pct(v) { return (v > 0 ? '+' : '') + v.toFixed(1) + '%'; }
+  function x(v) { return '×' + v.toFixed(2); }
+  function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
-  // ---------- in-browser self-test: the same invariants main.ts gates on ----------
-  function selfTest() {
-    var out = [];
-    function check(name, pass, detail) { out.push({ name: name, pass: pass, detail: detail }); }
-    check('board rows', rows.length === 198, rows.length + ' rows');
-    var wl = rows.filter(function (r) { return r.watchlist; }).length;
-    check('watchlist 40/40', wl === 40, wl + ' of 40 on the board');
-    var ordered = rows.every(function (r, i) { return r.rank === i + 1; }) &&
-      rows.every(function (r, i) { return i === 0 || rows[i - 1].implied_value_usd >= r.implied_value_usd; });
-    check('ranks 1..198, implied value descending', ordered, 'sequential ranks, sorted by implied value');
-    var acct = E.accounting.reduce(function (a, g) { return a + g.count; }, 0);
-    check('accounting sums to 758', acct === 758, acct + ' of 758');
-    check('all implied values finite and positive', rows.every(function (r) { return isFinite(r.implied_value_usd) && r.implied_value_usd > 0; }), rows.length + ' rows checked');
-    var odds = rows.map(function (r) { return r.odds; });
-    check('all odds in (0, 1)', rows.every(function (r) { return r.odds > 0 && r.odds < 1; }), 'min ' + Math.min.apply(null, odds).toFixed(3) + ', max ' + Math.max.apply(null, odds).toFixed(3));
-    check('farm steps: 8 per row, 20–600 chars each', rows.every(function (r) { return r.farm_steps.length === 8 && r.farm_steps.every(function (s) { return s.length >= 20 && s.length <= 600; }); }), rows.length + ' rows × 8 steps');
-    var sum = fnv1aHex(rows.map(function (r) { return r.rank + ',' + r.slug + ',' + Math.round(r.implied_value_usd); }).join('\n'));
-    check('checksum recomputes', sum === E.checksum, sum);
-    check('dossier text <= 64 KiB', E.dossierTextBytes <= 65536, 'dossier text ' + E.dossierTextBytes + ' bytes of 65,536');
-    return out;
-  }
+  // ---- header / KPIs ----
+  $('asof').textContent = 'Snapshot ' + R.asOf + ' · ' + R.source + ' · floor $' + (R.floorUsd / 1e6) + 'M · model ' + R.modelVersion;
+  var v = E.value, o = E.odds, f = E.farm;
+  var kpis = [
+    ['LOO miss', x(v.loo), 'flat ' + x(v.flatLoo) + ' — ' + v.looVsFlat.toFixed(2) + '× better'],
+    ['Walk-forward', x(v.wfMean), v.wf.map(x).join(' / ')],
+    ['5-fold CV', x(v.cv), '5 seeds, ' + R.boardSize + ' rows'],
+    ['Odds Brier', o.looBrier.toFixed(3), 'base ' + o.baseBrier.toFixed(3) + ' · WF ' + o.wfMean.toFixed(3)],
+    ['Coverage', R.boardSize + ' / ' + E.coverage.scanned, 'watchlist ' + E.coverage.watchlistCovered + '/' + E.coverage.watchlist],
+    ['FARM', String(f.farm), f.marginal + ' marginal · ' + f.skip + ' skip'],
+  ];
+  $('kpis').innerHTML = kpis.map(function (k) {
+    return '<div class="kpi"><b>' + esc(k[1]) + '</b><span>' + esc(k[0]) + ' — ' + esc(k[2]) + '</span></div>';
+  }).join('');
 
-  // ---------- KPI strip ----------
-  function renderKpi() {
-    var keptV = E.valueTerms.filter(function (t) { return t.verdict === 'kept'; }).length;
-    var keptO = E.oddsTerms.filter(function (t) { return t.verdict === 'kept'; }).length;
-    var tiles = [
-      ['×' + E.valueWf.toFixed(2), 'walk-forward miss, mean of 3 splits · CV ×' + E.valueCv.toFixed(2) + ' · flat ×' + E.valueFlatWf.toFixed(2)],
-      [pct(E.rangeHonesty.looP2575, 0) + ' · ' + pct(E.rangeHonesty.wfP2575, 0), 'held-out caps inside P25–P75 (stated 50%), LOO · WF'],
-      [E.oddsLooBrier.toFixed(3), 'odds Brier, LOO · base rate ' + E.oddsBaseBrier.toFixed(3)],
-      [keptV + ' + ' + keptO, 'terms survived both tests (value + odds)'],
-      [E.farmCounts.farm + ' of ' + E.boardN, 'FARM verdicts (' + E.farmCounts.marginal + ' marginal)'],
-      ['40/40', 'watchlist ranked · ' + E.compsN + ' comps'],
-    ];
-    document.getElementById('kpi').innerHTML = tiles.map(function (t) {
-      return '<div class="tile"><b>' + esc(t[0]) + '</b><span>' + esc(t[1]) + '</span></div>';
-    }).join('');
-    document.getElementById('asof').textContent = R.asOf;
-    document.getElementById('counts').textContent = E.boardN + ' ranked of 758 scanned, ' + E.compsN + ' traded comps';
+  // ---- tabs ----
+  var tabs = document.querySelectorAll('#tabs button');
+  function showTab(name) {
+    tabs.forEach(function (b) { b.classList.toggle('active', b.dataset.tab === name); });
+    document.querySelectorAll('section.tab').forEach(function (s) { s.classList.toggle('active', s.id === 'tab-' + name); });
   }
+  tabs.forEach(function (b) { b.addEventListener('click', function () { showTab(b.dataset.tab); }); });
 
-  // ---------- board ----------
-  var state = { q: '', cat: '', verdict: '' };
-  function filteredRows() {
-    var q = state.q.toLowerCase();
-    return rows.filter(function (r) {
-      if (q && r.name.toLowerCase().indexOf(q) < 0 && r.slug.toLowerCase().indexOf(q) < 0) return false;
-      if (state.cat && r.category !== state.cat) return false;
+  // ---- board ----
+  var state = {
+    sort: params.get('sort') || 'rank',
+    dir: params.get('dir') || 'asc',
+    q: params.get('q') || '',
+    cat: '',
+    verdict: params.get('filter') || '',
+    watch: false,
+  };
+  var cats = Array.from(new Set(R.rows.map(function (r) { return r.category || 'Other'; }))).sort();
+  $('cat').innerHTML = '<option value="">All categories</option>' + cats.map(function (c) { return '<option>' + esc(c) + '</option>'; }).join('');
+  $('q').value = state.q;
+  $('verdict').value = state.verdict;
+
+  function verdictRank(r) { return r.verdict === 'FARM' ? 0 : r.verdict === 'MARGINAL' ? 1 : 2; }
+  function sortVal(r, key) {
+    if (key === 'name') return r.name.toLowerCase();
+    if (key === 'category') return (r.category || 'Other').toLowerCase();
+    if (key === 'verdict') return verdictRank(r);
+    if (key === 'change_7d') return r.change_7d === null ? -Infinity : r.change_7d;
+    return r[key];
+  }
+  function filtered() {
+    var q = state.q.trim().toLowerCase();
+    var rows = R.rows.filter(function (r) {
+      if (q && r.name.toLowerCase().indexOf(q) === -1 && r.slug.indexOf(q) === -1) return false;
+      if (state.cat && (r.category || 'Other') !== state.cat) return false;
       if (state.verdict && r.verdict !== state.verdict) return false;
+      if (state.watch && !r.watchlist) return false;
       return true;
     });
+    var dir = state.dir === 'desc' ? -1 : 1;
+    rows.sort(function (a, b) {
+      var av = sortVal(a, state.sort), bv = sortVal(b, state.sort);
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      return a.rank - b.rank;
+    });
+    return rows;
   }
   function renderBoard() {
-    var list = filteredRows();
-    var tb = document.querySelector('#board tbody');
-    tb.innerHTML = list.map(function (r) {
-      return '<tr data-slug="' + esc(r.slug) + '"><td>' + r.rank + '</td>' +
-        '<td><span class="name">' + esc(r.name) + '</span><br><span class="meta">' + esc(r.slug) + ' · ' + esc(r.category) + ' · ' + r.chains + ' chain' + (r.chains === 1 ? '' : 's') + (r.watchlist ? ' · watchlist' : '') + (r.kin ? ' · family token' : '') + '</span></td>' +
-        '<td>' + money(r.tvl_usd) + '</td>' +
-        '<td>' + (r.change_7d === null ? '—' : signed(r.change_7d)) + '</td>' +
-        '<td>' + (r.age_days === null ? '—' : r.age_days + 'd') + '</td>' +
-        '<td>' + money(r.implied_value_usd) + '</td>' +
-        '<td>' + pct(r.odds) + '</td>' +
-        '<td>' + money(r.expected_value_usd) + '</td>' +
-        '<td>' + pct(r.own_token_share, 0) + '</td>' +
-        '<td>' + dollars(r.net_usd) + '</td>' +
-        '<td><span class="badge ' + r.verdict + '">' + r.verdict + '</span></td></tr>';
+    var rows = filtered();
+    $('count').textContent = rows.length + ' of ' + R.rows.length + ' rows';
+    $('board-body').innerHTML = rows.map(function (r) {
+      return '<tr class="' + (r.watchlist ? 'watch' : '') + '" data-slug="' + esc(r.slug) + '">' +
+        '<td class="num">' + r.rank + '</td>' +
+        '<td><b>' + esc(r.name) + '</b> <span class="slug">' + esc(r.slug) + '</span>' +
+          (r.watchlist ? '<span class="badge watch">WATCH</span>' : '') +
+          (r.kin ? '<span class="badge kin">KIN</span>' : '') + '</td>' +
+        '<td>' + esc(r.category || 'Other') + '</td>' +
+        '<td class="num">' + money(r.tvl_usd) + '</td>' +
+        '<td class="num">' + (r.change_7d === null ? '—' : pct(r.change_7d)) + '</td>' +
+        '<td class="num"><b>' + money(r.implied_value_usd) + '</b></td>' +
+        '<td class="num">' + r.odds.toFixed(3) + '</td>' +
+        '<td class="num">' + money(r.expected_value_usd) + '</td>' +
+        '<td><span class="badge ' + r.verdict.toLowerCase() + '">' + r.verdict + '</span></td>' +
+        '<td class="num">' + (r.net_usd >= 0 ? '+' : '') + '$' + r.net_usd.toFixed(2) + '</td>' +
+        '</tr>';
     }).join('');
-    document.getElementById('shown').textContent = list.length + ' of ' + rows.length + ' rows';
-    tb.querySelectorAll('tr').forEach(function (tr) {
-      tr.addEventListener('click', function () { openDetail(tr.getAttribute('data-slug')); });
+    document.querySelectorAll('#board-body tr').forEach(function (tr) {
+      tr.addEventListener('click', function () { openDetail(tr.dataset.slug); });
     });
   }
-  function renderCatOptions() {
-    var cats = Array.from(new Set(rows.map(function (r) { return r.category; }))).sort();
-    var sel = document.getElementById('fcat');
-    cats.forEach(function (c) {
-      var o = document.createElement('option');
-      o.value = c; o.textContent = c + ' (' + rows.filter(function (r) { return r.category === c; }).length + ')';
-      sel.appendChild(o);
+  document.querySelectorAll('#board th.sortable').forEach(function (th) {
+    th.addEventListener('click', function () {
+      var key = th.dataset.sort;
+      if (state.sort === key) state.dir = state.dir === 'asc' ? 'desc' : 'asc';
+      else { state.sort = key; state.dir = key === 'rank' ? 'asc' : 'desc'; }
+      renderBoard();
     });
-  }
+  });
+  $('q').addEventListener('input', function (e) { state.q = e.target.value; renderBoard(); });
+  $('cat').addEventListener('change', function (e) { state.cat = e.target.value; renderBoard(); });
+  $('verdict').addEventListener('change', function (e) { state.verdict = e.target.value; renderBoard(); });
+  $('watchonly').addEventListener('change', function (e) { state.watch = e.target.checked; renderBoard(); });
+  renderBoard();
 
-  // ---------- detail dialog ----------
+  // ---- detail dialog ----
+  var dlg = $('dlg');
   function openDetail(slug) {
-    var r = rows.find(function (x) { return x.slug === slug; });
+    var r = R.rows.find(function (x) { return x.slug === slug; });
     if (!r) return;
-    var dlg = document.getElementById('detail');
-    var logSum = r.contrib_intercept + r.contrib_size + r.contrib_growth;
-    dlg.innerHTML = '<div class="dlg"><button class="close" id="dlgclose">Close</button>' +
-      '<h2>#' + r.rank + ' ' + esc(r.name) + '</h2>' +
-      '<p class="meta">' + esc(r.slug) + ' · ' + esc(r.category) + ' · ' + r.chains + ' chain' + (r.chains === 1 ? '' : 's') + (r.watchlist ? ' · on the watchlist' : ' · early, below the floor') + ' · TVL ' + money(r.tvl_usd) + ' · 7d ' + (r.change_7d === null ? '—' : signed(r.change_7d)) + ' · age ' + (r.age_days === null ? '—' : r.age_days + ' days') + '</p>' +
-      '<div class="grid">' +
-      '<div><b>' + money(r.implied_value_usd) + '</b><span>implied value if it launches</span></div>' +
-      '<div><b>' + pct(r.odds) + '</b><span>odds it ever records a token</span></div>' +
-      '<div><b>' + money(r.expected_value_usd) + '</b><span>expected value = implied × odds × share</span></div>' +
-      '<div><b>' + pct(r.own_token_share, 0) + '</b><span>own-token share</span></div>' +
-      '<div><b>' + money(r.range_lo_usd) + ' – ' + money(r.range_hi_usd) + '</b><span>P25–P75 range of the implied value</span></div>' +
-      '<div><b>#' + r.rank_band_lo + '–#' + r.rank_band_hi + '</b><span>rank band over 200 bootstrap refits</span></div>' +
-      '<div><b>' + dollars(r.net_usd) + '</b><span>net: expected drop ' + dollars(r.expected_drop_usd) + ' − cost ' + dollars(r.total_cost_usd) + '</span></div>' +
-      '<div><b>' + r.verdict + '</b><span>farm verdict · deposit $' + r.deposit_usd + ' · hold until ' + r.hold_until_date + ' · net ' + dollars(r.net_usd) + '</span></div>' +
-      '</div>' +
-      '<h3>How the implied value is built (log10 contributions)</h3>' +
-      '<p>intercept ' + r.contrib_intercept.toFixed(2) + ' + size ' + r.contrib_size.toFixed(2) + ' + growth ' + r.contrib_growth.toFixed(2) + ' = ' + logSum.toFixed(2) + ' → ' + money(r.implied_value_usd) + '. The growth term is the 7-day TVL change, clamped to [−60%, +120%].</p>' +
-      (r.kin ? '<p><b>Family token:</b> ' + esc(r.kin_name || 'a same-stem protocol') + ' already records a token. The value is not discounted for this — the fitted family factor is a premium from 3 comps, not a discount — but the odds model credits it (see the Model &amp; tests tab).</p>' : '') +
-      '<h3>Farm plan — 8 dated, costed steps</h3><ol>' +
-      r.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') +
-      '</ol></div>';
-    document.getElementById('dlgclose').addEventListener('click', function () { dlg.close(); });
-    if (!dlg.open) dlg.showModal();
+    $('dlg-title').textContent = '#' + r.rank + ' ' + r.name + ' — ' + r.verdict;
+    $('dlg-body').innerHTML =
+      '<p><b>Implied value ' + moneyFull(r.implied_value_usd) + '</b> (whole dollars) · odds ' + r.odds.toFixed(3) +
+      ' · expected value ' + moneyFull(r.expected_value_usd) + ' · own-token share 100% · value range ' +
+      moneyFull(r.range_lo_usd) + '–' + moneyFull(r.range_hi_usd) + ' · rank band ' + r.rank_band_lo + '–' + r.rank_band_hi +
+      ' · TVL ' + moneyFull(r.tvl_usd) + (r.age_days === null ? ' · age unknown' : ' · ' + r.age_days + ' days old') +
+      (r.kin ? ' · kin: a family token already trades (' + esc(r.kin_name || '') + ')' : '') + '</p>' +
+      '<p>Farm: $' + r.deposit_usd + ' stake · expected drop $' + r.expected_drop_usd.toFixed(2) +
+      ' · total cost $' + r.total_cost_usd.toFixed(2) + ' · net $' + r.net_usd.toFixed(2) +
+      ' · hold until ' + esc(r.hold_until_date) + ' · no break-even date (fixed costs).</p>' +
+      '<ol>' + r.farm_steps.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>';
+    dlg.showModal();
   }
+  $('dlg-close').addEventListener('click', function () { dlg.close(); });
 
-  // ---------- Model & tests tab ----------
-  function verdictBadge(v) {
-    if (v === 'kept') return '<span class="badge kept">kept</span>';
-    if (v === 'control') return '<span class="badge control">control</span>';
-    return '<span class="badge notkept">tested-not-kept</span>';
-  }
-  function renderModel() {
-    var keptV = E.valueTerms.filter(function (t) { return t.verdict === 'kept'; }).map(function (t) { return t.label; });
-    var keptO = E.oddsTerms.filter(function (t) { return t.verdict === 'kept'; }).map(function (t) { return t.label; });
-    var h = '<div class="model">';
-    h += '<h2>The model</h2>' +
-      '<p>Value: log10(market cap) = ' + E.valueBeta[0].toFixed(2) + ' + ' + E.valueBeta[1].toFixed(2) + ' × log10(TVL)' +
-      (E.valueTerms.some(function (t) { return t.term === 'growth' && t.verdict === 'kept'; }) ? ' + ' + E.valueBeta[2].toFixed(2) + ' × growth' : '') +
-      ', fit by OLS on ' + E.compsN + ' traded comps (cleaning table below; of ' + E.compsPriced + ' priced tokens). ' +
-      'A term is kept only if adding it to the base lowers the held-out error in <b>both</b> tests — leave-one-out and walk-forward, the mean of three splits (older half / 60% / 40% fits, the newer launches scored) — by at least 1% for the value model and 0.002 Brier for the odds model. A term that wins by a hair is noise, not signal. One split alone is unstable — the miss moves a lot with the cut — so the headline walk-forward number is the mean of the three, and the tables show all three. ' +      'Kept for value: ' + (keptV.length ? keptV.join(', ') : 'none beyond size') + '. Kept for odds: ' + (keptO.length ? keptO.join(', ') : 'none beyond age and size') + '.</p>';
-    h += '<h3>Value coefficients (bootstrap SE, 200 refits)</h3><table><thead><tr><th>Term</th><th class="num">Coefficient</th><th class="num">SE</th></tr></thead><tbody>' +
-      E.valueLabels.map(function (lab, i) {
-        return '<tr><td>' + esc(lab) + '</td><td class="num">' + E.valueBeta[i].toFixed(3) + '</td><td class="num">± ' + E.valueSe[i].toFixed(3) + '</td></tr>';
-      }).join('') + '</tbody></table>';
-    h += '<h3>Value terms — two tests each</h3><table><thead><tr><th>Term</th><th class="num">LOO miss</th><th class="num">Walk-forward miss (mean of 3 splits)</th><th class="num">Win share, 200 splits</th><th>Verdict</th><th>Note</th></tr></thead><tbody>' +
-      '<tr><td>size only (base)</td><td class="num">×' + E.valueBaseLoo.toFixed(2) + '</td><td class="num">×' + E.valueBaseWf.toFixed(2) + '</td><td class="num">—</td><td>base</td><td>The base every candidate is added to. Flat-median baseline: LOO ×' + E.valueFlatLoo.toFixed(2) + ', walk-forward ×' + E.valueFlatWf.toFixed(2) + ' [' + E.valueFlatWfSplits.map(function (s) { return '×' + s.toFixed(2); }).join(' / ') + '].</td></tr>' +
-      E.valueTerms.map(function (t) {
-        return '<tr><td>' + esc(t.label) + '</td><td class="num">×' + t.loo.toFixed(2) + '</td><td class="num">×' + t.wf.toFixed(2) + '</td><td class="num">' + pct(t.winShare, 0) + '</td><td>' + verdictBadge(t.verdict) + '</td><td>' + esc(t.note) + '</td></tr>';
-      }).join('') + '</tbody></table>' +
-      '<p>Final value model: LOO ×' + E.valueLoo.toFixed(2) + ', walk-forward ×' + E.valueWf.toFixed(2) + ' (splits ×' + E.valueWfSplits.map(function (s) { return s.toFixed(2); }).join(' / ×') + '), 5-fold CV ×' + E.valueCv.toFixed(2) + ' (seeds ×' + E.valueCvSeeds.map(function (s) { return s.toFixed(2); }).join(' / ×') + ') — against a flat median of ×' + E.valueFlatLoo.toFixed(2) + ' / ×' + E.valueFlatWf.toFixed(2) + '.</p>';
-    h += '<h3>Odds terms — two tests each (Brier, lower is better)</h3><table><thead><tr><th>Term</th><th class="num">LOO Brier</th><th class="num">Walk-forward Brier (mean of 3 splits)</th><th class="num">Win share, 200 splits</th><th>Verdict</th><th>Note</th></tr></thead><tbody>' +
-      '<tr><td>age + size (base)</td><td class="num">' + E.oddsBaseLoo.toFixed(3) + '</td><td class="num">' + E.oddsBaseWf.toFixed(3) + '</td><td class="num">—</td><td>base</td><td>Base rate of the ' + E.peersN + ' peers is ' + pct(E.peersBaseRate) + ', Brier ' + E.oddsBaseBrier.toFixed(3) + '.</td></tr>' +
-      E.oddsTerms.map(function (t) {
-        return '<tr><td>' + esc(t.label) + '</td><td class="num">' + t.loo.toFixed(3) + '</td><td class="num">' + t.wf.toFixed(3) + '</td><td class="num">' + pct(t.winShare, 0) + '</td><td>' + verdictBadge(t.verdict) + '</td><td>' + esc(t.note) + '</td></tr>';
-      }).join('') + '</tbody></table>' +
-      '<p>Final odds model: Brier LOO ' + E.oddsLooBrier.toFixed(3) + ', walk-forward ' + E.oddsWfBrier.toFixed(3) + ' (splits ' + E.oddsWfSplits.map(function (s) { return s.toFixed(3); }).join(' / ') + '), 5-fold CV ' + E.oddsCvBrier.toFixed(3) + ', against a base rate of ' + E.oddsBaseBrier.toFixed(3) + '.</p>';
-    h += '<h3>Comps — how the ' + E.compsN + ' were cleaned</h3>' +
-      '<p>A comp has to price the protocol itself. Each rule below removes protocols whose cap does not — the counts are the running total after each rule, and the dropped names are named, not hidden.</p>' +
-      '<table><thead><tr><th>Stage</th><th class="num">Left</th><th>Why</th></tr></thead><tbody>' +
-      E.compsCleaning.map(function (s) {
-        return '<tr><td>' + esc(s.stage) + '</td><td class="num">' + s.count + '</td><td>' + esc(s.note) + '</td></tr>';
-      }).join('') + '</tbody></table>';
-    h += '<h3>Farm scenario — what a FARM verdict means</h3>' +
-      '<p>The farmer is a committed retail farmer with a flat <b>$' + E.farmScenario.depositUsd.toLocaleString('en-US') + ' stake</b> per farm. The drop pool is <b>' + Math.round(E.farmScenario.dropShare * 100) + '% of the expected value</b> (implied value × odds), and the farmer\u2019s share is the deposit as a fraction of TVL — ' + esc(E.farmScenario.eligibleNote) + '. The horizon is ' + E.farmScenario.horizonWeeks + ' weeks. Costs are fixed gas only: <b>$' + E.farmScenario.costUsd + '</b> (' + esc(E.farmScenario.costBreakdown) + '). The plan is deposit + hold + claim — no weekly paid action. FARM means the expected drop beats the gas by at least $10; MARGINAL means it beats the gas at all; SKIP means it does not. The $' + E.farmScenario.depositUsd.toLocaleString('en-US') + ' is locked for the hold (30–60 days) and its forgone yield is not in the verdict — see the sensitivity table.</p>' +
-      '<p>Why a flat stake, and why the whole TVL as the denominator? A stake that scales with TVL would make the verdicts depend on the farmer\u2019s wallet, not on the protocol — and a fraction of TVL as the eligible pool (say 10%) is an invented number that multiplies every expected drop by ten with no evidence behind it. The conservative end is to assume every TVL dollar earns points pro-rata: if only some TVL earns the drop, the true share — and the drop — is larger, so the base case understates the payoff rather than inventing one. The counts below are reported as-is; the parameters were not tuned to reach a target.</p>' +
-      '<table><thead><tr><th>Scenario</th><th class="num">FARM</th><th class="num">MARGINAL</th><th class="num">SKIP</th><th>Note</th></tr></thead><tbody>' +
-      E.farmSensitivity.map(function (s) {
-        return '<tr><td>' + esc(s.label) + '</td><td class="num">' + s.farm + '</td><td class="num">' + s.marginal + '</td><td class="num">' + s.skip + '</td><td>' + esc(s.note) + '</td></tr>';
-      }).join('') + '</tbody></table>' +
-      '<p>Best farms on the board (' + E.farmCounts.farm + ' FARM / ' + E.farmCounts.marginal + ' MARGINAL / ' + E.farmCounts.skip + ' SKIP of ' + E.boardN + '): use the FARM filter on the board tab. Every row carries an 8-step plan with dates and costs.</p>';
-    h += '<h3>Range honesty — do the printed bands cover what they state?</h3>' +
-      '<p>Intervals come from held-out residuals only. P25–P75 states 50%, P10–P90 states 80%.</p>' +
-      '<table><thead><tr><th>Test</th><th class="num">P25–P75 coverage</th><th class="num">P10–P90 coverage</th><th class="num">Held-out caps</th></tr></thead><tbody>' +
-      '<tr><td>Leave-one-out (2-fold split)</td><td class="num">' + pct(E.rangeHonesty.looP2575, 0) + '</td><td class="num">' + pct(E.rangeHonesty.looP1090, 0) + '</td><td class="num">' + E.rangeHonesty.looN + '</td></tr>' +
-      '<tr><td>Walk-forward</td><td class="num">' + pct(E.rangeHonesty.wfP2575, 0) + '</td><td class="num">' + pct(E.rangeHonesty.wfP1090, 0) + '</td><td class="num">' + E.rangeHonesty.wfN + '</td></tr>' +
-      '</tbody></table><p>' + esc(E.rangeHonesty.note) + '</p>';
-    h += '<h3>Named rivals — win share against the final model, 200 splits</h3>' +
-      '<table><thead><tr><th>Rival</th><th class="num">LOO</th><th class="num">Walk-forward</th><th class="num">Beats the final model</th></tr></thead><tbody>' +
-      E.valueRivals.map(function (r) {
-        return '<tr><td>' + esc(r.name) + ' (value)</td><td class="num">×' + r.loo.toFixed(2) + '</td><td class="num">×' + r.wf.toFixed(2) + '</td><td class="num">' + pct(r.winShareVsFinal, 0) + ' of splits</td></tr>';
-      }).join('') +
-      E.oddsRivals.map(function (r) {
-        return '<tr><td>' + esc(r.name) + ' (odds)</td><td class="num">' + r.loo.toFixed(3) + '</td><td class="num">' + r.wf.toFixed(3) + '</td><td class="num">' + pct(r.winShareVsFinal, 0) + ' of splits</td></tr>';
-      }).join('') + '</tbody></table>';
-    h += '<h3>Own-token share — tested, not applied as a discount</h3>' +
-      '<p>Adding a family-token dummy to the value model gives a coefficient of ' + E.kinBeta.toFixed(2) + ' ± ' + E.kinSe.toFixed(2) + ' (bootstrap SE) — a <b>premium</b>, not a discount, estimated from only ' + E.kinCompsN + ' comps that carry the flag, and it does not lower the held-out miss in both tests (LOO ×' + E.valueTerms.find(function (t) { return t.term === 'kin'; }).loo.toFixed(2) + ', walk-forward ×' + E.valueTerms.find(function (t) { return t.term === 'kin'; }).wf.toFixed(2) + ' against a size-only base of ×' + E.valueBaseLoo.toFixed(2) + ' LOO and ×' + E.valueBaseWf.toFixed(2) + ' walk-forward). ' +
-      'Applying it would inflate the values of family protocols on three comps of evidence, so the own-token share is 100% for every row and the formula stays explicit: value = value-if-launches × odds × share. ' +
-      'The family effect is used where the data support it: in the odds model, where the family-token term lowers the Brier score in both tests and is kept.</p>';
-    h += '<h3>Self-test (recomputed in this page, same invariants as the program)</h3>' +
-      '<table><thead><tr><th>Invariant</th><th>Result</th><th>Detail</th></tr></thead><tbody>' +
-      selfTest().map(function (t) {
-        return '<tr><td>' + esc(t.name) + '</td><td class="' + (t.pass ? 'pass' : 'fail') + '">' + (t.pass ? 'PASS' : 'FAIL') + '</td><td>' + esc(t.detail) + '</td></tr>';
-      }).join('') + '</tbody></table>';
-    h += '<p>Checksum ' + esc(E.checksum) + ' · dossier text ' + E.dossierTextBytes + ' bytes of 65,536 · odds coefficients: ' +
-      E.oddsLabels.map(function (lab, i) { return esc(lab) + ' ' + E.oddsBeta[i].toFixed(3); }).join(', ') + '.</p>';
-    h += '</div>';
-    document.getElementById('model').innerHTML = h;
-  }
+  // ---- model & tests ----
+  $('equation').textContent = 'log10(mcap) = ' + v.intercept.toFixed(4) + ' (±' + v.interceptSe.toFixed(4) + ') + ' + v.slope.toFixed(4) + ' (±' + v.slopeSe.toFixed(4) + ') × log10(TVL) — fitted on 90 comps, bootstrap SEs over 200 refits';
+  $('value-summary').textContent = 'Size only. Every extra term was tested against it and none cleared the 1% margin on both held-out tests, so none joined. The flat baseline (every protocol at the median mcap/TVL ratio) is ' + v.looVsFlat.toFixed(2) + '× worse on leave-one-out.';
+  $('validation').querySelector('tbody').innerHTML = [
+    ['Leave-one-out', x(v.loo), x(v.flatLoo), (v.flatLoo / v.loo).toFixed(2) + '×'],
+    ['Walk-forward mean (3 splits)', x(v.wfMean), x(v.flatWfMean), (v.flatWfMean / v.wfMean).toFixed(2) + '×'],
+    ['Walk-forward splits', v.wf.map(x).join(' / '), v.flatWfMean ? '—' : '—', '—'],
+    ['5-fold CV × 5 seeds', x(v.cv), x(v.flatCv), (v.flatCv / v.cv).toFixed(2) + '×'],
+  ].map(function (row) {
+    return '<tr><td>' + esc(row[0]) + '</td><td class="num"><b>' + esc(row[1]) + '</b></td><td class="num">' + esc(row[2]) + '</td><td class="num">' + esc(row[3]) + '</td></tr>';
+  }).join('');
+  $('terms').querySelector('tbody').innerHTML = v.termTests.map(function (t) {
+    return '<tr><td>' + esc(t.label) + (t.name === 'control' ? ' <span class="badge marginal">CONTROL</span>' : '') + '</td>' +
+      '<td class="num">' + x(t.loo) + '</td><td class="num">' + (t.looDeltaPct >= 0 ? '+' : '') + t.looDeltaPct.toFixed(1) + '%</td>' +
+      '<td class="num">' + x(t.wfMean) + '</td><td class="num">' + (t.wfDeltaPct >= 0 ? '+' : '') + t.wfDeltaPct.toFixed(1) + '%</td>' +
+      '<td>' + esc(t.verdict) + '</td></tr>';
+  }).join('');
+  var control = v.termTests.find(function (t) { return t.name === 'control'; });
+  var controlPasses = control && control.looDeltaPct >= 1 && control.wfDeltaPct >= 1;
+  $('control-note').innerHTML = '<div class="note control"><b>Control term — reported honestly:</b> another row’s growth (the next comparable in slug order) ' +
+    (controlPasses
+      ? '<b>passes both headline tests</b> (LOO ' + (control.looDeltaPct >= 0 ? '+' : '') + control.looDeltaPct.toFixed(1) + '%, WF ' + (control.wfDeltaPct >= 0 ? '+' : '') + control.wfDeltaPct.toFixed(1) + '%). It is not kept — it cannot predict anything, it is a row chosen by alphabetical accident. That it passes says the tests are noisy at n≈90, not that the model found signal. A term this flimsy passing is a finding about the noise floor, and it is printed here rather than hidden.'
+      : 'does <b>not</b> pass both headline tests (LOO ' + (control.looDeltaPct >= 0 ? '+' : '') + control.looDeltaPct.toFixed(1) + '%, WF ' + (control.wfDeltaPct >= 0 ? '+' : '') + control.wfDeltaPct.toFixed(1) + '%). It is not kept, and the margin by which it fails is printed here rather than hidden.') +
+    '</div>';
+  $('ranges').querySelector('tbody').innerHTML = [
+    ['P25–P75 (interquartile)', '50%', (v.rangeHonesty.loo.p2575 * 100).toFixed(0) + '%', (v.rangeHonesty.wf.p2575 * 100).toFixed(0) + '%'],
+    ['P10–P90', '80%', (v.rangeHonesty.loo.p1090 * 100).toFixed(0) + '%', (v.rangeHonesty.wf.p1090 * 100).toFixed(0) + '%'],
+  ].map(function (row) {
+    return '<tr><td>' + esc(row[0]) + '</td><td class="num">' + esc(row[1]) + '</td><td class="num">' + esc(row[2]) + '</td><td class="num">' + esc(row[3]) + '</td></tr>';
+  }).join('');
+  $('wins').querySelector('tbody').innerHTML = v.winShares.map(function (w) {
+    var reading = w.share >= 0.6 ? 'beats size-only on most splits' : w.share >= 0.4 ? 'a coin flip against size-only' : 'loses most splits';
+    return '<tr><td>' + esc(w.label) + '</td><td class="num">' + (w.share * 100).toFixed(0) + '%</td><td>' + reading + '</td></tr>';
+  }).join('');
+  $('odds-summary').textContent = 'Logistic model on ' + o.peers + ' dated protocols: does a protocol record a token? Base rate ' + (o.baseRate * 100).toFixed(1) + '% lists, so guessing the base rate scores Brier ' + o.baseBrier.toFixed(3) + '. The model scores ' + o.looBrier.toFixed(3) + ' on leave-one-out and ' + o.wfMean.toFixed(3) + ' walk-forward (' + o.wfBrier.map(function (b) { return b.toFixed(3); }).join(' / ') + ').';
+  $('odds-groups').textContent = 'Groups kept (each had to improve LOO Brier by at least 0.002): ' + (o.keptGroups.length ? o.keptGroups.join(', ') : 'none — size only') + '. Tested groups: ' + o.groupTests.map(function (g) { return g.group + ' Δ' + (g.delta >= 0 ? '+' : '') + g.delta.toFixed(3) + (g.kept ? ' kept' : ' not kept'); }).join(' · ') + '.';
+  $('odds-coefs').textContent = 'Coefficients: ' + o.coefficients.map(function (c) { return c.name + ' ' + c.value.toFixed(3); }).join(' · ');
+  $('odds-wf-note').innerHTML = '<b>Walk-forward is worse than the base rate — and the reason is in the table below, not in the model.</b> The listing rate falls from ~79% for protocols listed in 2021–2023 to ~32% for 2026: a protocol listed this year has simply not had time to launch a token yet, so its “no token” label is censored, not a verdict. A model trained only on old cohorts over-predicts for new ones. The board’s odds come from the full-data fit, which includes the young cohorts, so they are better calibrated than the walk-forward number suggests — but treat odds for the youngest protocols as upper bounds, not promises.';
+  $('cohorts').querySelector('tbody').innerHTML = o.cohorts.map(function (c) {
+    return '<tr><td>' + esc(c.year) + '</td><td class="num">' + c.n + '</td><td class="num">' + c.listed + '</td><td class="num">' + (c.rate * 100).toFixed(0) + '%</td></tr>';
+  }).join('');
 
-  // ---------- Coverage tab ----------
-  function renderCoverage() {
-    var total = E.accounting.reduce(function (a, g) { return a + g.count; }, 0);
-    var colors = ['#2e7d32', '#66bb6a', '#1565c0', '#90caf9', '#ef6c00', '#ffb74d', '#8e24aa', '#ce93d8', '#616161'];
-    var bar = '<div class="bar">' + E.accounting.map(function (g, i) {
-      return '<div style="width:' + (g.count / total * 100).toFixed(2) + '%;background:' + colors[i % colors.length] + '" title="' + esc(g.label) + ' ' + g.count + '"></div>';
-    }).join('') + '</div>';
-    var h = '<div class="coverage"><h2>Coverage — all ' + total + ' protocols accounted for</h2>' + bar +
-      '<table><thead><tr><th>Group</th><th class="num">Count</th><th>Detail</th></tr></thead><tbody>' +
-      E.accounting.map(function (g) {
-        return '<tr><td>' + esc(g.label) + '</td><td class="num">' + g.count + '</td><td>' + esc(g.detail) + '</td></tr>';
-      }).join('') + '</tbody></table>' +
-      '<p>The board is the whole watchlist (40/40) plus the top 158 rankable protocols below the $' + (R.floorUsd / 1e6) + 'M floor by TVL — the kit starter\u2019s rule. ' +
-      'Rankable means pre-token, not an exchange, not a versioned name. The early set includes bridge, staking and wrapped-name rows (the house list keeps those categories off the watchlist, but the starter\u2019s rule ranks by TVL below the floor); they are listed here so the count still sums to 758.</p>' +
-      '<p>Comps: ' + E.compsN + ' traded protocols fit the value model after the cleaning table on the Model tab (of ' + E.compsPriced + ' priced tokens). Odds peers: ' + E.peersN + ' protocols with a listing date, base rate ' + pct(E.peersBaseRate) + '.</p></div>';
-    document.getElementById('coverage').innerHTML = h;
-  }
+  // ---- coverage ----
+  var c = E.coverage;
+  $('coverage').querySelector('tbody').innerHTML = [
+    ['Scanned', c.scanned, 'protocols in the sealed snapshot'],
+    ['Ranked', c.ranked, 'watchlist ' + c.watchlistCovered + '/' + c.watchlist + ' + ' + (c.ranked - c.watchlistCovered) + ' early pre-token protocols below the $50M floor, by TVL'],
+    ['Live, with a market cap', c.liveWithMcap, 'already trade — set aside, not ranked'],
+    ['Token recorded, no market cap', c.tokenRecordedNoCap, 'a token record exists but no cap to value against'],
+    ['Token recorded, cap zero or negative', c.tokenRecordedZeroCap, 'a token record exists but the cap is $0 or below — no usable value'],
+    ['Pre-token, not ranked', c.preTokenNotRanked, 'below the board cut (TVL rank beyond the 158 early slots)'],
+  ].map(function (row) {
+    return '<tr><td>' + esc(row[0]) + '</td><td class="num"><b>' + row[1] + '</b></td><td>' + esc(row[2]) + '</td></tr>';
+  }).join('');
+  $('live').querySelector('tbody').innerHTML = R.live.map(function (p) {
+    return '<tr><td><b>' + esc(p.name) + '</b> <span class="slug">' + esc(p.slug) + '</span></td>' +
+      '<td>' + esc(p.category || 'Other') + '</td>' +
+      '<td class="num">' + money(p.tvl_usd) + '</td>' +
+      '<td class="num">' + money(p.mcap_usd) + '</td>' +
+      '<td class="num">' + (p.change_7d === null ? '—' : pct(p.change_7d)) + '</td></tr>';
+  }).join('');
 
-  // ---------- tabs, hash routing, init ----------
-  function showTab(name) {
-    document.querySelectorAll('#tabs button').forEach(function (b) {
-      b.classList.toggle('active', b.getAttribute('data-tab') === name);
-    });
-    document.querySelectorAll('.tabpage').forEach(function (s) {
-      s.hidden = s.id !== 'tab-' + name;
-    });
-  }
-  function readHash() {
-    var h = {};
-    location.hash.slice(1).split('&').forEach(function (kv) {
-      var p = kv.split('=');
-      if (p[0]) h[decodeURIComponent(p[0])] = decodeURIComponent(p[1] || '');
-    });
-    return h;
-  }
-  function init() {
-    renderKpi();
-    renderCatOptions();
-    var h = readHash();
-    if (h.q) { state.q = h.q; document.getElementById('q').value = h.q; }
-    if (h.category) { state.cat = h.category; document.getElementById('fcat').value = h.category; }
-    if (h.verdict) { state.verdict = h.verdict; document.getElementById('fverdict').value = h.verdict; }
-    renderBoard();
-    renderModel();
-    renderCoverage();
-    document.getElementById('integrity').textContent = 'Checksum ' + E.checksum + ' · dossier text ' + E.dossierTextBytes + ' bytes of 65,536 · ' +
-      selfTest().filter(function (t) { return t.pass; }).length + ' of ' + selfTest().length + ' self-test invariants hold in this page.';
-    document.getElementById('q').addEventListener('input', function (e) { state.q = e.target.value; renderBoard(); });
-    document.getElementById('fcat').addEventListener('change', function (e) { state.cat = e.target.value; renderBoard(); });
-    document.getElementById('fverdict').addEventListener('change', function (e) { state.verdict = e.target.value; renderBoard(); });
-    document.querySelectorAll('#tabs button').forEach(function (b) {
-      b.addEventListener('click', function () { showTab(b.getAttribute('data-tab')); });
-    });
-    if (h.tab) showTab(h.tab);
-    if (h.p) openDetail(h.p);
-  }
-  init();
+  // ---- best farms ----
+  $('best').querySelector('tbody').innerHTML = f.best.map(function (b) {
+    return '<tr><td class="num">' + b.rank + '</td><td><b>' + esc(b.name) + '</b> <span class="slug">' + esc(b.slug) + '</span></td>' +
+      '<td class="num">' + money(b.implied) + '</td><td class="num">' + b.odds.toFixed(3) + '</td>' +
+      '<td class="num">' + money(b.ev) + '</td><td class="num">$' + b.drop.toFixed(2) + '</td><td class="num"><b>+$' + b.net.toFixed(2) + '</b></td></tr>';
+  }).join('');
+  $('sensitivity').querySelector('tbody').innerHTML = f.sensitivity.map(function (s) {
+    return '<tr><td>' + esc(s.variant) + '</td><td class="num"><b>' + s.farm + '</b></td></tr>';
+  }).join('');
+
+  // ---- integrity strip + footer ----
+  $('integrity').innerHTML = E.integrity.map(function (t) {
+    return '<span><b class="' + (t.pass ? '' : 'fail') + '">' + (t.pass ? 'PASS' : 'FAIL') + '</b> ' + esc(t.name) + ' — ' + esc(t.detail) + '</span>';
+  }).join('') + '<span>checksum <b class="mono">' + esc(E.checksum) + '</b></span>';
+  $('footer').textContent = 'Token Radar v5 · model ' + R.modelVersion + ' · snapshot ' + R.asOf + ' · ' + E.coverage.scanned + ' protocols scanned, ' + R.boardSize + ' rows ranked · generated by main.ts (Node 22, standard library only, no network) · implied values are whole dollars, rounded at the source';
+
+  // ---- opening view from the URL ----
+  var tab = params.get('tab');
+  if (tab) showTab(tab);
+  var detail = params.get('detail');
+  if (detail) openDetail(detail);
 })();
