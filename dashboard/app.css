@@ -1,84 +1,60 @@
-* { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
-body { background: #0b0f17; color: #dbe2ee; font: 13px/1.45 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 8px 14px 20px; }
-h1 { font-size: 19px; line-height: 1.2; margin: 0 0 2px; color: #fff; }
-h1 b { color: #f5a623; }
-h2 { font-size: 16px; margin: 14px 0 6px; color: #fff; }
-h3 { font-size: 13px; margin: 12px 0 4px; color: #8fb8ff; }
-.sub { margin: 0 0 6px; color: #9aa7bd; font-size: 11px; line-height: 1.35; max-width: 1350px; }
-a { color: #8fb8ff; }
-
-/* KPI strip: six tiles, one line each. */
-.kpis { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin: 0 0 6px; }
-.kpi { background: #151d2b; border: 1px solid #263248; border-radius: 6px; padding: 3px 10px; }
-.kpi b { display: block; font-size: 16px; color: #fff; line-height: 1.15; }
-.kpi span { font-size: 11px; color: #9aa7bd; }
-
-/* Tabs. */
-#tabs { display: flex; gap: 2px; border-bottom: 1px solid #263248; margin-bottom: 8px; }
-#tabs button { background: none; border: 1px solid transparent; border-bottom: 0; color: #9aa7bd; font: 13px/1 inherit; padding: 5px 14px; cursor: pointer; border-radius: 6px 6px 0 0; }
-#tabs button.on { background: #151d2b; color: #fff; border-color: #263248; }
-.tab { display: none; }
-.tab.on { display: block; }
-
-/* Panels on the board tab. */
-.panel { border-radius: 6px; padding: 6px 12px; margin-bottom: 6px; }
-.panel h4 { margin: 0 0 4px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
-.farms { background: #12241a; border: 1px solid #1f4d2e; }
-.farms h4 { color: #7ddba0; }
-.farmcards { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
-.farmcard { background: #0f1f16; border: 1px solid #245c38; border-radius: 6px; padding: 3px 9px; }
-.farmcard .nm { font-weight: 600; color: #e8f5ec; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.farmcard .net { color: #4ade80; font-weight: 700; font-size: 14px; }
-.farmcard .meta { color: #8fb89a; font-size: 11px; }
-.integrity { background: #241d10; border: 1px solid #4d3d1f; color: #e8d9b0; font-size: 11px; line-height: 1.4; }
-.integrity h4 { display: inline; margin-right: 6px; }
-.integrity h4 { color: #e8c96a; }
-.integrity b { color: #fff; }
-
-/* Filters. */
-.filters { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
-.filters input[type=search] { background: #151d2b; color: #dbe2ee; border: 1px solid #263248; border-radius: 5px; padding: 4px 8px; font: 12px/1 inherit; width: 220px; }
-.filters select { background: #151d2b; color: #dbe2ee; border: 1px solid #263248; border-radius: 5px; padding: 4px 6px; font: 12px/1 inherit; }
-.filters label { color: #9aa7bd; font-size: 12px; }
-.filters #count { margin-left: auto; color: #9aa7bd; font-size: 12px; }
-
-/* Board table: compact rows so ~30 fit in a 900px shot. */
-table { border-collapse: collapse; width: 100%; }
-#board th { text-align: left; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; color: #8fa0b8; padding: 1px 8px; border-bottom: 1px solid #263248; }
-#board td { padding: 1px 8px; border-bottom: 1px solid #1a2334; font-size: 11px; line-height: 1.2; white-space: nowrap; }
-#board tbody tr { cursor: pointer; }
-#board tbody tr:hover { background: #131c2c; }
-#board td.num, #board th.num { text-align: right; }
-#board .nm { font-weight: 600; color: #fff; }
-#board .slug { color: #7c8aa5; font-size: 11px; margin-left: 6px; }
-.badge { display: inline-block; border-radius: 4px; padding: 0 5px; font-size: 10px; font-weight: 700; line-height: 14px; }
-.badge.watch { background: #f5a623; color: #201600; }
-.badge.farm { background: #1f7a37; color: #d8ffe2; }
-.badge.marginal { background: #8a6d1b; color: #ffefc2; }
-.badge.skip { background: #3a4557; color: #c3cede; }
-.pos { color: #4ade80; }
-.neg { color: #f87171; }
-
-/* Detail view. */
-.detail { margin-top: 12px; }
-.detail .head { display: flex; gap: 18px; align-items: baseline; flex-wrap: wrap; }
-.detail .head h2 { margin: 0; }
-.detail .stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin: 8px 0; }
-.detail .stat { background: #151d2b; border: 1px solid #263248; border-radius: 6px; padding: 6px 10px; }
-.detail .stat b { display: block; font-size: 16px; color: #fff; }
-.detail .stat span { font-size: 11px; color: #9aa7bd; }
-.detail ol { margin: 6px 0; padding-left: 20px; }
-.detail ol li { margin-bottom: 5px; }
-.detail .note { color: #9aa7bd; font-size: 12px; }
-
-/* Generic boxes and tables in the other tabs. */
-.box { background: #151d2b; border: 1px solid #263248; border-radius: 6px; padding: 9px 12px; font-size: 12px; }
-.box code { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; color: #e8eefb; }
-.box p { margin: 5px 0; }
-table.plain { font-size: 12px; }
-table.plain th { text-align: left; color: #8fa0b8; font-size: 10px; letter-spacing: .05em; text-transform: uppercase; padding: 4px 10px 4px 0; border-bottom: 1px solid #263248; }
-table.plain td { padding: 4px 10px 4px 0; border-bottom: 1px solid #1a2334; vertical-align: top; }
-table.plain td.num, table.plain th.num { text-align: right; }
-table.plain td.r, table.plain th.r { text-align: right; }
-.mono { font-family: ui-monospace, Menlo, Consolas, monospace; }
+*{box-sizing:border-box}
+body{margin:0;background:#0d1117;color:#e6edf3;font:14px/1.5 -apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header{padding:18px 22px 0;background:#161b22;border-bottom:1px solid #30363d}
+h1{margin:0;font-size:26px;letter-spacing:.5px}
+h1 .v7{color:#58a6ff}
+.sub{margin:2px 0 8px;color:#adbac7;font-size:15px}
+.method{margin:0 0 12px;max-width:1100px;color:#8b949e;font-size:12.5px}
+nav{display:flex;gap:6px;padding-bottom:12px}
+nav button{background:#21262d;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:7px 16px;font-size:14px;cursor:pointer}
+nav button.on{background:#1f6feb;border-color:#1f6feb;color:#fff}
+main{padding:16px 22px 30px;max-width:1400px}
+.tab{display:none}.tab.on{display:block}
+h2{margin:4px 0 10px;font-size:19px}
+h3{margin:0 0 8px;font-size:15px;color:#58a6ff}
+.kpis{display:grid;grid-template-columns:repeat(8,1fr);gap:8px;margin-bottom:12px}
+.kpi{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:8px 10px;min-width:0}
+.kpi b{display:block;font-size:17px;white-space:nowrap}
+.kpi span{color:#8b949e;font-size:11px;line-height:1.35;display:block}
+.bestfarms{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px}
+.farmcard{background:#12261c;border:1px solid #2d6a4f;border-radius:8px;padding:8px 10px;min-width:0}
+.farmcard b{display:block;font-size:16px;color:#3fb950}
+.farmcard span{color:#8b949e;font-size:11px;line-height:1.35;display:block}
+.integrity{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12.5px}
+.integrity b{color:#3fb950}
+.accounting{margin-bottom:14px}
+.bar{display:flex;height:26px;border-radius:6px;overflow:hidden;border:1px solid #30363d;font-size:12px}
+.bar div{padding:3px 8px;white-space:nowrap;overflow:hidden}
+.bar .ranked{background:#1f6feb}.bar .live{background:#6e7681}.bar .nocap{background:#8b5cf6}.bar .zero{background:#9e6a03}.bar .notranked{background:#30363d}
+.accounting .legend{color:#8b949e;font-size:12.5px;margin-top:5px}
+.twocol{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+.panel{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 14px}
+.note{color:#8b949e;font-size:12.5px;margin:8px 0 0}
+.filters{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin:4px 0 8px;font-size:13px}
+.filters select,.filters input{background:#0d1117;color:#e6edf3;border:1px solid #30363d;border-radius:6px;padding:5px 8px}
+.count{color:#8b949e;font-size:12.5px;margin:2px 0 6px}
+table{width:100%;border-collapse:collapse;background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden}
+th,td{padding:7px 10px;text-align:left;border-bottom:1px solid #21262d;font-size:13px}
+th{color:#8b949e;cursor:pointer;user-select:none;white-space:nowrap}
+tbody tr{cursor:pointer}
+tbody tr:hover{background:#1c2128}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.badge{display:inline-block;padding:1px 8px;border-radius:20px;font-size:12px;font-weight:600}
+.badge.FARM{background:#12261c;color:#3fb950;border:1px solid #2d6a4f}
+.badge.MARGINAL{background:#2b2305;color:#d29922;border:1px solid #9e6a03}
+.badge.SKIP{background:#2b1215;color:#f85149;border:1px solid #8b2c2c}
+.detail{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px 16px;margin-top:14px}
+.detail h3{margin:0 0 4px}
+.detail .meta{color:#8b949e;font-size:13px;margin-bottom:10px}
+.detail ol{margin:6px 0;padding-left:22px}
+.detail li{margin-bottom:5px;font-size:13.5px}
+.detail .steps b{color:#58a6ff}
+footer{padding:14px 22px;color:#6e7681;font-size:12.5px;border-top:1px solid #21262d}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 14px;font-size:13px}
+.kv dt{color:#8b949e}.kv dd{margin:0}
+@media(max-width:900px){.twocol{grid-template-columns:1fr}.kpis{grid-template-columns:repeat(2,1fr)}.bestfarms{grid-template-columns:1fr}}
+/* Screenshot helper (?shot=detail): isolate the farm plan at the top of the
+   page. Headless-shell screenshots paint scrolled regions blank, so the detail
+   shot hides the board instead of scrolling to it. */
+body.shot-detail .kpis,body.shot-detail .bestfarms,body.shot-detail .integrity,body.shot-detail .accounting,body.shot-detail .filters,body.shot-detail .count,body.shot-detail #board,body.shot-detail .twocol{display:none}

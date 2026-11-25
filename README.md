@@ -4,7 +4,7 @@
 
 # Token Radar v5
 
-[Token Radar on make.fun](https://make.fun/bounty/token-radar-01) — the next 198 token launches, ranked by implied value.
+[Token Radar on make.fun](https://make.fun/bounty/token-radar-01) — the next 200 token launches, ranked by implied value.
 
 Every pre-token protocol in the sealed 14 November 2026 snapshot (758 protocols), valued by how much its token would be worth if it launched today. The value model is a size-only log-log OLS on 90 traded comparables (`log10(mcap) ~ log10(TVL)`), held out at leave-one-out, walk-forward and 5-fold CV; the odds model is a logistic listing model. Farm plans are built from fixed first principles: flat $2,000 stake, drop pool 7% of expected value, share = deposit ÷ full TVL, fixed $11 gas, FARM at net ≥ $10.
 

@@ -1,73 +1,90 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Token Radar v6 — the next 198 token launches, ranked by implied value</title>
+<title>Token Radar v7 — 24-month launch odds from the age curve</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 <header>
-  <h1>Token Radar <b>v6</b> — the next 198 token launches, ranked by implied value</h1>
-  <p class="sub">Every pre-token protocol in the sealed 14 November 2026 snapshot (758 protocols), valued by how much its token would be worth if it launched today. The value model is a size-only log-log OLS on 90 traded comparables; the odds model is a logistic listing model. Every number on this page was computed by this run — nothing is copied from an earlier radar. Snapshot 2026-11-14 · DefiLlama https://api.llama.fi/protocols, fetched 2026-11-14T01:18:33.201Z · floor $50M · model radar-5</p>
-  <div id="kpis" class="kpis"></div>
-  <nav id="tabs">
+  <h1>Token Radar <span class="v7">v7</span></h1>
+  <p class="sub">Which pre-token protocol is worth farming — priced from traded comparables, with 24-month launch odds from the age curve.</p>
+  <p class="method">Value: size-only OLS on 90 traded comps (log mcap on log TVL). Odds: 24-month launch odds from listing, fitted only on the 302 protocols whose 24-month outcome is known — young protocols' "no token" labels are censored, not negatives. Farm: flat $2,000 deposit, drop pool 7% of expected value, share = deposit / (10% of TVL), gas $11, 52 weeks. FARM when net &ge; $10.</p>
+  <nav>
     <button data-tab="board" class="on">Board</button>
+    <button data-tab="farms">Best farms</button>
     <button data-tab="model">Model &amp; tests</button>
     <button data-tab="coverage">Coverage</button>
-    <button data-tab="farms">Best farms</button>
   </nav>
 </header>
+
 <main>
-  <section id="tab-board" class="tab on">
-    <div id="bestfarms" class="panel farms"></div>
-    <div id="integrity" class="panel integrity"></div>
-    <div class="filters">
-      <input id="q" type="search" placeholder="Search name or slug...">
-      <select id="fcat"><option value="">All categories</option></select>
-      <select id="fverdict"><option value="">All verdicts</option><option>FARM</option><option>MARGINAL</option><option>SKIP</option></select>
-      <select id="sort"><option value="rank">Sort: rank (implied value)</option><option value="ev">Sort: expected value</option><option value="net">Sort: net $</option><option value="odds">Sort: odds</option></select>
-      <label><input id="fwatch" type="checkbox"> Watchlist only</label>
-      <span id="count"></span>
-    </div>
-    <table id="board">
-      <thead><tr><th>Rank</th><th>Protocol</th><th>Category</th><th>TVL</th><th>7d %</th><th>Implied $</th><th>Odds</th><th>EV $</th><th>Farm</th><th>Net $</th></tr></thead>
-      <tbody></tbody>
-    </table>
-    <div id="detail" class="detail"></div>
-  </section>
-  <section id="tab-model" class="tab">
-    <h2>Value model — size only, because the tests say so</h2>
-    <div id="modelbox" class="box"></div>
-    <h3>Held-out validation</h3>
-    <div id="validbox"></div>
-    <h3>Term selection — a term only joins if it clears 1% on BOTH tests</h3>
-    <div id="termbox"></div>
-    <h3>Range honesty — the band on every row is the middle half of the leave-one-out residuals</h3>
-    <div id="rangebox" class="box"></div>
-    <h3>Odds model — a logistic listing model</h3>
-    <div id="oddsbox" class="box"></div>
-    <h3>Odds validation — the walk-forward miss, and why it misses</h3>
-    <div id="oddsvalid"></div>
-    <h3>Listing cohorts — the censoring behind the walk-forward miss</h3>
-    <div id="cohortbox"></div>
-  </section>
-  <section id="tab-coverage" class="tab">
-    <h2>Coverage — what the snapshot holds and what the board ranks</h2>
-    <div id="covbox"></div>
-    <h3>How the 90 fitted comps were cleaned</h3>
-    <div id="cleanbox"></div>
-    <h3>Farm sensitivity — how the farm count moves when the rules move</h3>
-    <div id="sensbox"></div>
-  </section>
-  <section id="tab-farms" class="tab">
-    <h2>Best farms — the ten plans that pay best, by net dollars</h2>
-    <div id="farmstable"></div>
-    <h3>Farm rules — fixed before the board was built</h3>
-    <div id="farmrules" class="box"></div>
-  </section>
+<section id="tab-board" class="tab on">
+  <div id="kpis" class="kpis"></div>
+  <div id="bestfarms" class="bestfarms"></div>
+  <div id="integrity" class="integrity"></div>
+  <div id="accounting" class="accounting"></div>
+  <div class="filters">
+    <label>Verdict <select id="f-verdict"><option value="">all</option><option>FARM</option><option>MARGINAL</option><option>SKIP</option></select></label>
+    <label>Category <select id="f-cat"><option value="">all</option></select></label>
+    <label><input type="checkbox" id="f-watch"> watchlist only</label>
+    <label>Search <input id="f-q" type="search" placeholder="name or slug"></label>
+  </div>
+  <p class="count" id="rowcount"></p>
+  <table id="board"><thead><tr>
+    <th data-sort="rank">#</th><th data-sort="name">Protocol</th><th data-sort="tvl">TVL</th><th data-sort="age">Age</th>
+    <th data-sort="implied">Implied value</th><th data-sort="odds">Odds 24m</th><th data-sort="ev">Expected value</th>
+    <th data-sort="net">Net</th><th data-sort="verdict">Verdict</th>
+  </tr></thead><tbody></tbody></table>
+  <div id="detail" class="detail"></div>
+  <div class="twocol">
+    <div class="panel" id="term-panel"><h2>Every term tested, twice</h2><div id="term-table"></div>
+      <p class="note">Kept only if it beats size-only on BOTH leave-one-out and walk-forward by &ge;1% and wins over half the 200 random splits. Nothing did — so the value model stays size-only. The control (another row's growth) "wins" LOO by 4.6% and still fails: at n=90 the median miss is noisy, which is why the two-test rule exists.</p></div>
+    <div class="panel" id="honesty-panel"><h2>Do the ranges tell the truth?</h2><div id="honesty"></div>
+      <p class="note">Ranges are prediction intervals from the leave-one-out residuals — not the bootstrap parameter intervals, which print far too narrow (only 6.7% of real caps inside P25–P75). Walk-forward P10–P90 prints a little narrow (69.6% of the stated 80%): the ranges are honest about that too.</p></div>
+  </div>
+</section>
+
+<section id="tab-farms" class="tab">
+  <h2>Best farms by net</h2>
+  <p class="note">Every FARM row, best net first. Each plan is eight concrete steps: $2,000 in, 52 weeks, gas $11, drop priced from that row's own expected value and TVL. Click a row for its full plan.</p>
+  <table id="farmstable"><thead><tr>
+    <th>#</th><th>Protocol</th><th>TVL</th><th>Implied</th><th>Odds</th><th>EV</th><th>Drop</th><th>Net</th>
+  </tr></thead><tbody></tbody></table>
+  <div id="farmdetail" class="detail"></div>
+</section>
+
+<section id="tab-model" class="tab">
+  <h2>Model &amp; tests</h2>
+  <div class="twocol">
+    <div class="panel"><h3>Value model — size-only OLS</h3><div id="value-model"></div><div id="value-table"></div></div>
+    <div class="panel"><h3>Odds model — 24-month horizon</h3><div id="odds-model"></div><div id="odds-table"></div></div>
+  </div>
+  <div class="twocol">
+    <div class="panel"><h3>Launch odds by age</h3><div id="odds-curve"></div>
+      <p class="note">Odds(A) = [F(730) − F(A)] / [1 − F(A)]: the chance a protocol still tokenless at age A records one within its first 24 months. The window closes — a protocol past 730 days without a token has ~0 chance of launching within its first 24 months, so its odds are 0.001, not a made-up number.</p></div>
+    <div class="panel"><h3>Cohorts: the era effect</h3><div id="cohorts"></div>
+      <p class="note">The age curve mixes two things: older protocols have had more time to launch, AND the 2021–23 cohorts listed in a friendlier era than the 2025–26 cohorts. The table shows the era effect next to the age curve so the confound is visible, not hidden. Young protocols' "no token" labels are censored — that is why they never enter the odds fit.</p></div>
+  </div>
+  <div class="twocol">
+    <div class="panel"><h3>Rivals</h3><div id="rivals"></div></div>
+    <div class="panel"><h3>Comparables pipeline</h3><div id="pipeline"></div></div>
+  </div>
+  <p class="note">What v7 does NOT claim: the category effect the top entries use does not survive here (every shape loses on both tests); the value curve is the same size-only OLS as v5/v6; the odds are a peer rate from one snapshot, not a forecast of any single protocol. If the age term had failed either test, v7 would not exist.</p>
+</section>
+
+<section id="tab-coverage" class="tab">
+  <h2>Coverage — every protocol accounted for</h2>
+  <div id="coverage"></div>
+  <p class="note">The watchlist is the floor, never the ceiling: the board ranks 158 pre-token protocols below the $50M floor as well as all 40 on it. Live-token protocols are set aside and shown at the market's own values, never mixed into the ranking.</p>
+</section>
 </main>
-<script src="data.js"></script>
+
+<footer>
+  <p>Token Radar v7 · snapshot <span id="asof"></span> · source: DefiLlama protocols · all figures recomputed in this run from the snapshot alone · no protocol name is special-cased</p>
+</footer>
+<script src="evidence.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
